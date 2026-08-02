@@ -1,0 +1,495 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Restaurant {
+  id String @id @default(uuid())
+
+  name String
+  slug String @unique
+
+  email String?
+  phone String?
+
+  address    String?
+  city       String?
+  postalCode String?
+  country    String?
+
+  timezone String @default("Europe/Helsinki")
+  currency String @default("EUR")
+
+  logoUrl String?
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches   Branch[]
+  users      User[]
+  categories MenuCategory[]
+  menuItems  MenuItem[]
+  orders     Order[]
+  serviceRequests ServiceRequest[]
+}
+
+model Branch {
+  id String @id @default(uuid())
+
+  name String
+
+  address    String?
+  city       String?
+  postalCode String?
+  country    String?
+
+  phone String?
+  email String?
+
+  active Boolean @default(true)
+
+  /** Opaque public token for walk-in ordering / pickup URLs (not the branch UUID). */
+  walkInToken String @unique @default(uuid())
+
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  managerId String?
+  manager   User?   @relation("BranchManager", fields: [managerId], references: [id])
+
+  devices Device[]
+  tables  Table[]
+  users   User[]
+  orders  Order[]
+  serviceRequests ServiceRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([restaurantId])
+}
+
+model Device {
+  id          String       @id @default(uuid())
+
+  branchId    String
+  branch      Branch       @relation(fields: [branchId], references: [id])
+
+  name        String
+
+  deviceType  DeviceType
+
+  status      DeviceStatus @default(OFFLINE)
+
+  token       String       @unique
+
+  /** Null = no expiry (legacy). New/rotated tokens set a TTL. */
+  tokenExpiresAt DateTime?
+
+  lastSeen    DateTime?
+
+  appVersion  String?
+
+  createdAt   DateTime @default(now())
+}
+
+model Table {
+  id          String      @id @default(uuid())
+
+  branchId    String
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  number      String
+  seats       Int         @default(4)
+
+  qrToken String? @unique
+
+  qrCode      String?     @unique
+
+  /** When set, public QR access is rejected after this timestamp. */
+  qrTokenExpiresAt DateTime?
+
+  status      TableStatus @default(AVAILABLE)
+
+  notes       String?
+
+  active      Boolean     @default(true)
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  deletedAt   DateTime?
+  deletedBy   String?
+
+  orders      Order[]
+  serviceRequests ServiceRequest[]
+
+  @@unique([branchId, number])
+  @@index([branchId])
+}
+
+model Order {
+  id            String   @id @default(uuid())
+
+  restaurantId  String
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
+
+  branchId      String
+  branch        Branch @relation(fields: [branchId], references: [id])
+
+  tableId       String?
+  table         Table? @relation(fields: [tableId], references: [id])
+
+  /** DINE_IN (table QR) vs WALK_IN (standing / queue). */
+  mode          OrderMode @default(DINE_IN)
+
+  /** Human-friendly pickup number for walk-in orders (branch-scoped, resets daily). */
+  queueNumber   Int?
+
+  customerName  String?
+
+  status        OrderStatus @default(NEW)
+
+  total         Decimal @default(0) @db.Decimal(10,2)
+
+  createdById   String?
+  createdBy     User? @relation("CreatedOrders", fields: [createdById], references: [id])
+
+  items         OrderItem[]
+
+  /** One or more payments (full check or split by seat/items). */
+  payments      Payment[]
+
+  serviceRequests ServiceRequest[]
+
+  /** First time the order entered each kitchen/floor status (SLA metrics). */
+  acceptedAt  DateTime?
+  preparingAt DateTime?
+  readyAt     DateTime?
+  servedAt    DateTime?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([restaurantId])
+  @@index([branchId])
+  @@index([tableId])
+  @@index([status])
+  @@index([branchId, mode, status])
+  @@index([branchId, queueNumber])
+}
+
+model OrderItem {
+  id          String @id @default(uuid())
+
+  orderId     String
+  order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  menuItemId  String
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+
+  quantity    Int
+
+  price       Decimal @db.Decimal(10,2)
+
+  notes       String?
+
+  status      OrderStatus @default(NEW)
+
+  /** Guest seat at the table (1..N); null = shared / unassigned. */
+  seatNumber  Int?
+
+  /** Service course for fire-next / KDS grouping. */
+  course      Course @default(MAIN)
+
+  /** When this line was released to kitchen (null = held for later course). */
+  firedAt     DateTime?
+
+  modifiers   OrderItemModifier[]
+  paymentLines PaymentLine[]
+
+  createdAt   DateTime @default(now())
+
+  @@index([orderId])
+}
+
+model Payment {
+  id     String @id @default(uuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /** Total charged (cover toward order total + tip). */
+  amount Decimal @db.Decimal(10, 2)
+
+  /** Tip portion included in amount (0 if none). */
+  tipAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  /** Cumulative refunds against this payment. */
+  refundedAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  method PaymentMethod
+  status PaymentStatus @default(PENDING)
+
+  /** none | mock | stripe — which ONLINE path created this row. */
+  provider String?
+
+  /** External PSP id (e.g. Stripe Checkout Session / PaymentIntent). */
+  providerRef String? @unique
+
+  paidAt     DateTime?
+  refundedAt DateTime?
+
+  lines PaymentLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+}
+
+/** Allocates a payment to specific order lines (split-by-item / seat). */
+model PaymentLine {
+  id          String @id @default(uuid())
+
+  paymentId   String
+  payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  amount      Decimal @db.Decimal(10, 2)
+
+  createdAt   DateTime @default(now())
+
+  @@unique([paymentId, orderItemId])
+  @@index([orderItemId])
+}
+
+model MenuCategory {
+  id           String     @id @default(uuid())
+  restaurantId String
+  name         String
+  displayOrder Int        @default(0)
+  active       Boolean    @default(true)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  menuItems    MenuItem[]
+
+  @@index([restaurantId])
+}
+
+model MenuItem {
+  id           String       @id @default(uuid())
+  restaurantId String
+  categoryId   String
+  name         String
+  description  String?
+  price        Decimal      @db.Decimal(10, 2)
+  imageUrl     String?
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  category     MenuCategory @relation(fields: [categoryId], references: [id])
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  orderItems   OrderItem[]
+  modifierGroups ModifierGroup[]
+
+  @@index([restaurantId])
+  @@index([categoryId])
+}
+
+model ModifierGroup {
+  id           String @id @default(uuid())
+  menuItemId   String
+  menuItem     MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  name         String
+  minSelect    Int @default(0)
+  maxSelect    Int @default(1)
+  required     Boolean @default(false)
+  displayOrder Int @default(0)
+
+  options      ModifierOption[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([menuItemId])
+}
+
+model ModifierOption {
+  id           String @id @default(uuid())
+  groupId      String
+  group        ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  name         String
+  priceDelta   Decimal @default(0) @db.Decimal(10, 2)
+  active       Boolean @default(true)
+  displayOrder Int @default(0)
+
+  orderItemModifiers OrderItemModifier[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([groupId])
+}
+
+model OrderItemModifier {
+  id          String @id @default(uuid())
+
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  optionId    String?
+  option      ModifierOption? @relation(fields: [optionId], references: [id], onDelete: SetNull)
+
+  groupName   String
+  optionName  String
+  priceDelta  Decimal @db.Decimal(10, 2)
+
+  @@index([orderItemId])
+}
+
+model ServiceRequest {
+  id           String @id @default(uuid())
+
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  branchId     String
+  branch       Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  tableId      String
+  table        Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  orderId      String?
+  order        Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  type         ServiceRequestType
+  status       ServiceRequestStatus @default(PENDING)
+  note         String?
+
+  acknowledgedAt DateTime?
+  completedAt    DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([branchId, status])
+  @@index([tableId, status])
+  @@index([restaurantId])
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+
+  firstName    String?
+  lastName     String?
+
+  role         UserRole
+
+  restaurantId String?
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id])
+
+  branchId     String?
+  branch       Branch? @relation(fields: [branchId], references: [id])
+
+  managedBranches Branch[] @relation("BranchManager")
+
+  active       Boolean @default(true)
+
+  createdOrders Order[] @relation("CreatedOrders")
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum UserRole {
+  PLATFORM_ADMIN
+  RESTAURANT_OWNER
+  BRANCH_MANAGER
+  WAITER
+  CHEF
+  CASHIER
+}
+
+enum OrderStatus {
+  /** Walk-in cart submitted; waiting for prepay before kitchen. */
+  PENDING_PAYMENT
+  NEW
+  ACCEPTED
+  PREPARING
+  READY
+  SERVED
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderMode {
+  DINE_IN
+  WALK_IN
+}
+
+enum Course {
+  APPETIZER
+  DRINK
+  MAIN
+  DESSERT
+  OTHER
+}
+
+enum DeviceType {
+  WAITER
+  KITCHEN
+  CUSTOMER_DISPLAY
+  CASHIER
+  MANAGER
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  OUT_OF_SERVICE
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  ONLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  VOIDED
+}
+
+enum ServiceRequestType {
+  CALL_WAITER
+  REQUEST_BILL
+}
+
+enum ServiceRequestStatus {
+  PENDING
+  ACKNOWLEDGED
+  COMPLETED
+  CANCELLED
+}

@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "PaymentStatus" ADD VALUE 'PARTIALLY_REFUNDED';
+ALTER TYPE "PaymentStatus" ADD VALUE 'VOIDED';

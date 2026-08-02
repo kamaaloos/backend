@@ -1,0 +1,31 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "declaration": true,
+        "removeComments": true,
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true,
+        "allowSyntheticDefaultImports": true,
+        "target": "es2023",
+        "sourceMap": true,
+        "outDir": "./dist",
+        "baseUrl": "./",
+        "incremental": true,
+        "skipLibCheck": true,
+        "strict": false,
+        "useDefineForClassFields": true
+    },
+    "files": [
+        "./src/app.controller.spec.ts",
+        "./src/app.controller.ts",
+        "./src/app.module.ts",
+        "./src/app.service.ts",
+        "./src/main.ts",
+        "./src/prisma/prisma.module.ts",
+        "./src/prisma/prisma.service.ts",
+        "./test/app.e2e-spec.ts"
+    ],
+    "exclude": [
+        "C:/Users/kamaa/dev/restaurant-platform/backend/dist"
+    ]
+}
