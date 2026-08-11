@@ -68,6 +68,16 @@ export class CustomerController {
     return this.customerService.getWalkInOrder(walkInToken, orderId);
   }
 
+  /** Guest cancel before kitchen accepts / before walk-in payment. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('customer/walk-in/:walkInToken/orders/:orderId/cancel')
+  cancelWalkInOrder(
+    @Param('walkInToken') walkInToken: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.customerService.cancelWalkInOrder(walkInToken, orderId);
+  }
+
   /** Walk-in prepay — kitchen receives the ticket only after PAID. */
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('customer/walk-in/:walkInToken/orders/:orderId/pay')
@@ -134,6 +144,22 @@ export class CustomerController {
     @Param('orderId') orderId: string,
   ) {
     return this.customerService.getOrder(token, orderId);
+  }
+
+  /** Guest cancel before kitchen accepts the ticket. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('customer/:token/orders/:orderId/cancel')
+  cancelOrder(
+    @Param('token') token: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.customerService.cancelTableOrder(token, orderId);
+  }
+
+  /** Public: open service requests for this table (pending / acknowledged). */
+  @Get('customer/:token/service-requests')
+  listOpenServiceRequests(@Param('token') token: string) {
+    return this.customerService.listOpenServiceRequestsForTable(token);
   }
 
   /** Public: call waiter / request bill. */

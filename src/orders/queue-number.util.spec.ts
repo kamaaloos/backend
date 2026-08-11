@@ -1,4 +1,9 @@
-import { nextQueueNumber, queueDayStart } from './queue-number.util';
+import {
+  formatWalkInQueueCode,
+  nextQueueNumber,
+  queueDayStart,
+  WALK_IN_QUEUE_PREFIX,
+} from './queue-number.util';
 
 describe('queue-number.util', () => {
   it('starts queue day at UTC midnight', () => {
@@ -32,5 +37,12 @@ describe('queue-number.util', () => {
         }),
       }),
     );
+  });
+
+  it('formats W0012 + 2-digit queue (guest 1 → W001201)', () => {
+    expect(WALK_IN_QUEUE_PREFIX).toBe('W0012');
+    expect(formatWalkInQueueCode(1)).toBe('W001201');
+    expect(formatWalkInQueueCode(12)).toBe('W001212');
+    expect(formatWalkInQueueCode(null)).toBeNull();
   });
 });

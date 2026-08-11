@@ -39,23 +39,45 @@ export class StripeWebhookController {
       signature,
     );
 
-    if (
-      event.type === 'checkout.session.completed' ||
-      event.type === 'checkout.session.async_payment_succeeded'
-    ) {
-      const session = event.data.object;
-      const paymentId = session.metadata?.paymentId;
-      const providerRef = session.id;
+    const claimed = await this.paymentsService.claimStripeWebhookEvent(
+      event.id,
+      event.type,
+    );
+    if (!claimed) {
+      return { received: true, duplicate: true };
+    }
 
-      try {
+    try {
+      if (
+        event.type === 'checkout.session.completed' ||
+        event.type === 'checkout.session.async_payment_succeeded'
+      ) {
+        const session = event.data.object;
+        const paymentId = session.metadata?.paymentId;
+        const providerRef = session.id;
+
         if (paymentId) {
           await this.paymentsService.settleOnlineById(paymentId, providerRef);
         } else {
           await this.paymentsService.settleOnlineByProviderRef(providerRef);
         }
-      } catch {
-        // Acknowledge anyway — missing/local payments should not retry forever.
+      } else if (event.type === 'payment_intent.succeeded') {
+        const intent = event.data.object;
+        const paymentId = intent.metadata?.paymentId;
+        const providerRef = intent.id;
+
+        if (paymentId) {
+          await this.paymentsService.settleOnlineById(paymentId, providerRef);
+        } else {
+          await this.paymentsService.settleOnlineByProviderRef(providerRef);
+        }
+      } else if (event.type === 'payment_intent.payment_failed') {
+        const intent = event.data.object;
+        await this.paymentsService.failPendingByProviderRef(intent.id);
       }
+    } catch {
+      // Acknowledge anyway — missing/local payments should not retry forever.
+      // Event id is already claimed so Stripe retries will short-circuit.
     }
 
     return { received: true };

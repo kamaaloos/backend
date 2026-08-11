@@ -7,6 +7,9 @@ import { ConfigService } from '@nestjs/config';
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
 import Stripe from 'stripe';
 
+import { toStripeAmount, type MoneyInput } from './stripe-amount';
+import { Decimal } from '@prisma/client/runtime/library';
+
 export type PaymentProviderId = 'none' | 'mock' | 'stripe';
 
 export type OnlineCheckoutResult = {
@@ -15,11 +18,18 @@ export type OnlineCheckoutResult = {
   checkoutUrl?: string;
 };
 
+export type CardPresentIntentResult = {
+  provider: 'stripe';
+  providerRef: string;
+  clientSecret: string;
+};
+
 /**
- * ONLINE payment gate + Stripe Checkout.
- * - none → ONLINE rejected
- * - mock → ONLINE PENDING (staff markPaid)
- * - stripe → Checkout Session; webhook settles to PAID
+ * ONLINE: Checkout (mock markPaid | stripe session + webhook).
+ * CARD: Stripe Terminal only (PaymentIntent + webhook). Never honor-system.
+ * CARD_MANUAL: Explicit till honor-system card (immediate PAID).
+ * CASH: staff create as PAID / pending-cash + markPaid.
+ * Reporting uses Payment.channel (CASH | TERMINAL | ONLINE | COUNTER).
  */
 @Injectable()
 export class PaymentProviderService {
@@ -41,11 +51,28 @@ export class PaymentProviderService {
     return this.getProviderId() !== 'none';
   }
 
+  /**
+   * Card-present via Stripe Terminal.
+   * On when PAYMENT_PROVIDER=stripe and STRIPE_TERMINAL is not 0/false.
+   */
+  isTerminalEnabled() {
+    if (this.getProviderId() !== 'stripe') return false;
+    const raw = (this.config.get<string>('STRIPE_TERMINAL') ?? '1')
+      .trim()
+      .toLowerCase();
+    return raw !== '0' && raw !== 'false' && raw !== 'off';
+  }
+
   getPublicConfig() {
     const provider = this.getProviderId();
+    const terminalEnabled = this.isTerminalEnabled();
+    const locationId =
+      this.config.get<string>('STRIPE_TERMINAL_LOCATION_ID')?.trim() || null;
     return {
       provider,
       onlineEnabled: provider !== 'none',
+      terminalEnabled,
+      terminalLocationId: terminalEnabled ? locationId : null,
       publishableKey:
         provider === 'stripe'
           ? this.config.get<string>('STRIPE_PUBLISHABLE_KEY')?.trim() || null
@@ -53,7 +80,6 @@ export class PaymentProviderService {
     };
   }
 
-  /** Prefer CUSTOMER_APP_URL, else CORS origin on :3001, else localhost. */
   customerAppUrl() {
     const explicit = this.config.get<string>('CUSTOMER_APP_URL')?.trim();
     if (explicit) return explicit.replace(/\/$/, '');
@@ -77,13 +103,10 @@ export class PaymentProviderService {
   }
 
   /**
-   * Initial status for a newly created payment.
-   * ONLINE always starts PENDING (async capture / mock confirm).
+   * Server-owned initial status. Clients never choose PAID/PENDING.
+   * CARD requires Terminal — use CARD_MANUAL for honor-system till card.
    */
-  initialStatusFor(
-    method: PaymentMethod | string,
-    requested?: PaymentStatus,
-  ): PaymentStatus {
+  initialStatusFor(method: PaymentMethod | string): PaymentStatus {
     if (method === PaymentMethod.ONLINE || method === 'ONLINE') {
       if (!this.isOnlineEnabled()) {
         throw new Error('ONLINE_DISABLED');
@@ -91,16 +114,23 @@ export class PaymentProviderService {
       return PaymentStatus.PENDING;
     }
 
-    return requested ?? PaymentStatus.PAID;
+    if (method === PaymentMethod.CARD || method === 'CARD') {
+      if (!this.isTerminalEnabled()) {
+        throw new Error('TERMINAL_REQUIRED');
+      }
+      return PaymentStatus.PENDING;
+    }
+
+    // CASH, CARD_MANUAL
+    return PaymentStatus.PAID;
   }
 
-  /** Create Stripe Checkout Session for an ONLINE payment row. */
   async createOnlineCheckout(input: {
     paymentId: string;
     orderId: string;
-    amount: number;
+    amount: MoneyInput;
     currency: string;
-    tipAmount: number;
+    tipAmount: MoneyInput;
     successUrl?: string;
     cancelUrl?: string;
   }): Promise<OnlineCheckoutResult> {
@@ -118,22 +148,37 @@ export class PaymentProviderService {
     const stripe = this.getStripe();
     const currency = input.currency.toLowerCase();
     const unitAmount = toStripeAmount(input.amount, currency);
-    const defaultBase =
-      this.config.get<string>('STRIPE_SUCCESS_URL')?.trim() ||
-      this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() ||
-      'http://localhost:3005';
-    const successUrl =
-      input.successUrl?.trim() ||
-      `${defaultBase.replace(/\/$/, '')}?paid=1&orderId=${input.orderId}`;
+
+    const successUrl = input.successUrl?.trim();
     const cancelUrl =
       input.cancelUrl?.trim() ||
       this.config.get<string>('STRIPE_CANCEL_URL')?.trim() ||
-      `${defaultBase.replace(/\/$/, '')}?paid=0&orderId=${input.orderId}`;
+      undefined;
+    const fallbackSuccess = this.config
+      .get<string>('STRIPE_SUCCESS_URL')
+      ?.trim();
+
+    const resolvedSuccess =
+      successUrl ||
+      (fallbackSuccess
+        ? `${fallbackSuccess.replace(/\/$/, '')}?paid=1&orderId=${input.orderId}`
+        : undefined);
+    const resolvedCancel =
+      cancelUrl ||
+      (fallbackSuccess
+        ? `${fallbackSuccess.replace(/\/$/, '')}?paid=0&orderId=${input.orderId}`
+        : undefined);
+
+    if (!resolvedSuccess || !resolvedCancel) {
+      throw new BadRequestException(
+        'Checkout redirect URLs required: pass successUrl/cancelUrl or set STRIPE_SUCCESS_URL (and optionally STRIPE_CANCEL_URL)',
+      );
+    }
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      success_url: successUrl,
-      cancel_url: cancelUrl,
+      success_url: resolvedSuccess,
+      cancel_url: resolvedCancel,
       line_items: [
         {
           quantity: 1,
@@ -142,10 +187,9 @@ export class PaymentProviderService {
             unit_amount: unitAmount,
             product_data: {
               name: `Order ${input.orderId.slice(0, 8)}`,
-              description:
-                input.tipAmount > 0
-                  ? `Includes tip ${input.tipAmount}`
-                  : 'Restaurant order',
+              description: new Decimal(input.tipAmount as Decimal.Value).gt(0)
+                ? `Includes tip ${String(input.tipAmount)}`
+                : 'Restaurant order',
             },
           },
         },
@@ -173,22 +217,159 @@ export class PaymentProviderService {
     };
   }
 
+  async createTerminalConnectionToken(): Promise<{ secret: string }> {
+    if (!this.isTerminalEnabled()) {
+      throw new BadRequestException('Stripe Terminal is not enabled');
+    }
+    const location = this.config
+      .get<string>('STRIPE_TERMINAL_LOCATION_ID')
+      ?.trim();
+    const token = await this.getStripe().terminal.connectionTokens.create(
+      location ? { location } : undefined,
+    );
+    if (!token.secret) {
+      throw new BadRequestException('Stripe did not return a connection token');
+    }
+    return { secret: token.secret };
+  }
+
+  /** Registered readers at STRIPE_TERMINAL_LOCATION_ID (empty if unset). */
+  async listTerminalReaders(): Promise<
+    Array<{
+      id: string;
+      label: string | null;
+      status: string;
+      deviceType: string | null;
+      serialNumber: string | null;
+    }>
+  > {
+    if (!this.isTerminalEnabled()) {
+      throw new BadRequestException('Stripe Terminal is not enabled');
+    }
+    const location = this.config
+      .get<string>('STRIPE_TERMINAL_LOCATION_ID')
+      ?.trim();
+    if (!location) {
+      return [];
+    }
+    const listed = await this.getStripe().terminal.readers.list({
+      location,
+      limit: 50,
+    });
+    return listed.data.map((r) => ({
+      id: r.id,
+      label: r.label ?? null,
+      status: r.status ?? 'unknown',
+      deviceType: r.device_type ?? null,
+      serialNumber: r.serial_number ?? null,
+    }));
+  }
+
+  async registerTerminalReader(input: {
+    registrationCode: string;
+    label: string;
+  }): Promise<{ id: string; label: string | null; status: string }> {
+    if (!this.isTerminalEnabled()) {
+      throw new BadRequestException('Stripe Terminal is not enabled');
+    }
+    const location = this.config
+      .get<string>('STRIPE_TERMINAL_LOCATION_ID')
+      ?.trim();
+    if (!location) {
+      throw new BadRequestException(
+        'STRIPE_TERMINAL_LOCATION_ID is required to register a reader',
+      );
+    }
+    const reader = await this.getStripe().terminal.readers.create({
+      registration_code: input.registrationCode.trim(),
+      label: input.label.trim(),
+      location,
+    });
+    return {
+      id: reader.id,
+      label: reader.label ?? null,
+      status: reader.status ?? 'unknown',
+    };
+  }
+
+  async createCardPresentIntent(input: {
+    paymentId: string;
+    orderId: string;
+    amount: MoneyInput;
+    currency: string;
+    tipAmount: MoneyInput;
+  }): Promise<CardPresentIntentResult> {
+    if (!this.isTerminalEnabled()) {
+      throw new BadRequestException('Stripe Terminal is not enabled');
+    }
+
+    const stripe = this.getStripe();
+    const currency = input.currency.toLowerCase();
+    const intent = await stripe.paymentIntents.create({
+      amount: toStripeAmount(input.amount, currency),
+      currency,
+      payment_method_types: ['card_present'],
+      capture_method: 'automatic',
+      metadata: {
+        paymentId: input.paymentId,
+        orderId: input.orderId,
+        tipAmount: String(input.tipAmount),
+      },
+    });
+
+    if (!intent.client_secret) {
+      throw new BadRequestException(
+        'Stripe did not return a PaymentIntent client secret',
+      );
+    }
+
+    return {
+      provider: 'stripe',
+      providerRef: intent.id,
+      clientSecret: intent.client_secret,
+    };
+  }
+
+  /** Used after Terminal processPayment so local/pilot need not wait on webhooks. */
+  async retrievePaymentIntentStatus(providerRef: string) {
+    if (this.getProviderId() !== 'stripe') {
+      throw new BadRequestException('Stripe is not configured');
+    }
+    const intent = await this.getStripe().paymentIntents.retrieve(providerRef);
+    return {
+      id: intent.id,
+      status: intent.status,
+    };
+  }
+
   async refundOnline(input: {
     provider: string | null | undefined;
     providerRef: string | null | undefined;
-    amount: number;
+    amount: MoneyInput;
     currency: string;
+    idempotencyKey?: string;
   }): Promise<void> {
     if (input.provider !== 'stripe' || !input.providerRef) {
       return;
     }
 
     const stripe = this.getStripe();
-    const session = await stripe.checkout.sessions.retrieve(input.providerRef);
-    const paymentIntentId =
-      typeof session.payment_intent === 'string'
-        ? session.payment_intent
-        : session.payment_intent?.id;
+    const ref = input.providerRef;
+    let paymentIntentId: string | undefined;
+
+    if (ref.startsWith('pi_')) {
+      paymentIntentId = ref;
+    } else if (ref.startsWith('cs_')) {
+      const session = await stripe.checkout.sessions.retrieve(ref);
+      paymentIntentId =
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : session.payment_intent?.id;
+    } else {
+      throw new BadRequestException(
+        'Cannot refund: unrecognized Stripe provider reference',
+      );
+    }
 
     if (!paymentIntentId) {
       throw new BadRequestException(
@@ -196,10 +377,15 @@ export class PaymentProviderService {
       );
     }
 
-    await stripe.refunds.create({
-      payment_intent: paymentIntentId,
-      amount: toStripeAmount(input.amount, input.currency.toLowerCase()),
-    });
+    await stripe.refunds.create(
+      {
+        payment_intent: paymentIntentId,
+        amount: toStripeAmount(input.amount, input.currency.toLowerCase()),
+      },
+      input.idempotencyKey
+        ? { idempotencyKey: input.idempotencyKey }
+        : undefined,
+    );
   }
 
   constructStripeEvent(rawBody: Buffer, signature: string): Stripe.Event {
@@ -222,14 +408,4 @@ export class PaymentProviderService {
     this.logger.log('Stripe client initialized');
     return this.stripe;
   }
-}
-
-/** Convert major currency units to Stripe minor units (cents). */
-function toStripeAmount(amount: number, currency: string): number {
-  // Zero-decimal currencies (rare for this product); default ×100.
-  const zeroDecimal = new Set(['jpy', 'krw', 'vnd']);
-  if (zeroDecimal.has(currency)) {
-    return Math.round(amount);
-  }
-  return Math.round(amount * 100);
 }

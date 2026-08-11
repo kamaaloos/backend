@@ -91,13 +91,17 @@ async function main() {
   });
   console.log('✅ Cashier created (cashier@restaurant.local / cashier123)');
 
-  const existingTable = await prisma.table.findFirst({
+  // Keep the E2E QR on the demo branch (not a stray restaurant from local demos).
+  await prisma.table.updateMany({
     where: {
-      OR: [
-        { qrToken: E2E_FIXTURES.tableQrToken },
-        { branchId: branch.id, number: '1' },
-      ],
+      qrToken: E2E_FIXTURES.tableQrToken,
+      NOT: { branchId: branch.id },
     },
+    data: { qrToken: null },
+  });
+
+  const existingTable = await prisma.table.findFirst({
+    where: { branchId: branch.id, number: '1' },
   });
   if (!existingTable) {
     await prisma.table.create({
@@ -108,10 +112,14 @@ async function main() {
         qrToken: E2E_FIXTURES.tableQrToken,
       },
     });
-  } else if (existingTable.qrToken !== E2E_FIXTURES.tableQrToken) {
+  } else {
     await prisma.table.update({
       where: { id: existingTable.id },
-      data: { qrToken: E2E_FIXTURES.tableQrToken },
+      data: {
+        qrToken: E2E_FIXTURES.tableQrToken,
+        deletedAt: null,
+        seats: existingTable.seats || 4,
+      },
     });
   }
   console.log('✅ Demo table QR token');
@@ -135,16 +143,111 @@ async function main() {
     where: { restaurantId: restaurant.id, active: true },
   });
   if (menuCount === 0) {
-    await prisma.menuItem.create({
-      data: {
-        restaurantId: restaurant.id,
-        categoryId: category.id,
-        name: 'Margherita Pizza',
-        description: 'Tomato, mozzarella, and fresh basil',
-        price: 12.5,
-        active: true,
-      },
+    await prisma.menuItem.createMany({
+      data: [
+        {
+          restaurantId: restaurant.id,
+          categoryId: category.id,
+          name: 'Margherita Pizza',
+          description: 'Tomato, mozzarella, and fresh basil',
+          price: 12.5,
+          imageUrl: 'menu/margherita.jpg',
+          active: true,
+        },
+        {
+          restaurantId: restaurant.id,
+          categoryId: category.id,
+          name: 'Caesar Salad',
+          description: 'Romaine, Parmesan, croutons, Caesar dressing',
+          price: 9.5,
+          imageUrl: 'menu/caesar-salad.jpg',
+          active: true,
+        },
+        {
+          restaurantId: restaurant.id,
+          categoryId: category.id,
+          name: 'Tiramisu',
+          description: 'Espresso-soaked ladyfingers and mascarpone',
+          price: 7.5,
+          imageUrl: 'menu/tiramisu.jpg',
+          active: true,
+        },
+      ],
     });
+  } else {
+    // Attach bundled demo images when items exist without imageUrl
+    const demos: Array<{ name: string; imageUrl: string }> = [
+      { name: 'Margherita Pizza', imageUrl: 'menu/margherita.jpg' },
+      { name: 'Caesar Salad', imageUrl: 'menu/caesar-salad.jpg' },
+      { name: 'Greek salad', imageUrl: 'menu/salad-greek.jpg' },
+      { name: 'Greek Salad', imageUrl: 'menu/salad-greek.jpg' },
+      { name: 'Garden salad', imageUrl: 'menu/salad-garden.jpg' },
+      { name: 'Garden Salad', imageUrl: 'menu/salad-garden.jpg' },
+      { name: 'Tuna salad', imageUrl: 'menu/salad-tuna.jpg' },
+      { name: 'Tuna Salad', imageUrl: 'menu/salad-tuna.jpg' },
+      { name: 'Chicken salad', imageUrl: 'menu/salad-chicken.jpg' },
+      { name: 'Chicken Salad', imageUrl: 'menu/salad-chicken.jpg' },
+      { name: 'Avocado salad', imageUrl: 'menu/salad-avocado.jpg' },
+      { name: 'Avocado Salad', imageUrl: 'menu/salad-avocado.jpg' },
+      { name: 'Caprese salad', imageUrl: 'menu/salad-caprese.jpg' },
+      { name: 'Caprese Salad', imageUrl: 'menu/salad-caprese.jpg' },
+      { name: 'Seafood salad', imageUrl: 'menu/salad-seafood.jpg' },
+      { name: 'Seafood Salad', imageUrl: 'menu/salad-seafood.jpg' },
+      { name: 'Tiramisu', imageUrl: 'menu/tiramisu.jpg' },
+      { name: 'Sambusa', imageUrl: 'menu/sambusa.jpg' },
+      { name: 'Bur', imageUrl: 'menu/bur.jpg' },
+      { name: 'Somali-soup', imageUrl: 'menu/somali-soup.jpg' },
+      { name: 'fish soup', imageUrl: 'menu/fish-soup.jpg' },
+      { name: 'hot drinks ->Tea', imageUrl: 'menu/tea.jpg' },
+      { name: 'Tea', imageUrl: 'menu/tea.jpg' },
+      { name: 'Tea without milk', imageUrl: 'menu/tea-no-milk.jpg' },
+      { name: 'Tea (no milk)', imageUrl: 'menu/tea-no-milk.jpg' },
+      { name: 'Black tea', imageUrl: 'menu/tea-no-milk.jpg' },
+      { name: 'Espresso', imageUrl: 'menu/coffee-espresso.jpg' },
+      { name: 'Cappuccino', imageUrl: 'menu/coffee-cappuccino.jpg' },
+      { name: 'Latte', imageUrl: 'menu/coffee-latte.jpg' },
+      { name: 'Coffee', imageUrl: 'menu/coffee-espresso.jpg' },
+      { name: 'Hot chocolate', imageUrl: 'menu/hot-chocolate.jpg' },
+      { name: 'Hot Chocolate', imageUrl: 'menu/hot-chocolate.jpg' },
+      { name: 'soft drink -> Fanta', imageUrl: 'menu/soft-drink.jpg' },
+      { name: 'Lemonade', imageUrl: 'menu/cold-lemonade.jpg' },
+      { name: 'Cola', imageUrl: 'menu/cold-cola.jpg' },
+      { name: 'Orange juice', imageUrl: 'menu/cold-orange-juice.jpg' },
+      { name: 'Chocolate shake', imageUrl: 'menu/shake-chocolate.jpg' },
+      { name: 'Strawberry shake', imageUrl: 'menu/shake-strawberry.jpg' },
+      { name: 'Vanilla shake', imageUrl: 'menu/shake-vanilla.jpg' },
+      { name: 'Mango shake', imageUrl: 'menu/shake-mango.jpg' },
+      { name: 'Pasta with fish', imageUrl: 'menu/pasta-fish.jpg' },
+      { name: 'Pasta fish', imageUrl: 'menu/pasta-fish.jpg' },
+      { name: 'Fish pasta', imageUrl: 'menu/pasta-fish.jpg' },
+      { name: 'Lasagna', imageUrl: 'menu/pasta-lasagna.jpg' },
+      { name: 'Pasta lasagna', imageUrl: 'menu/pasta-lasagna.jpg' },
+      { name: 'Cream pasta', imageUrl: 'menu/pasta-cream.jpg' },
+      { name: 'Pasta cream', imageUrl: 'menu/pasta-cream.jpg' },
+      { name: 'Bolognese', imageUrl: 'menu/pasta-bolognese.jpg' },
+      { name: 'Pasta bolognese', imageUrl: 'menu/pasta-bolognese.jpg' },
+      { name: 'Soor', imageUrl: 'menu/soor.jpg' },
+      { name: 'Somali soor', imageUrl: 'menu/soor.jpg' },
+      { name: 'Bariis', imageUrl: 'menu/bariis.jpg' },
+      { name: 'Suqaar', imageUrl: 'menu/suqaar.jpg' },
+      { name: 'Grilled fish', imageUrl: 'menu/grilled-fish.jpg' },
+      { name: 'Pasta with salmon', imageUrl: 'menu/pasta-salmon.jpg' },
+      { name: 'Pasta salmon', imageUrl: 'menu/pasta-salmon.jpg' },
+      { name: 'Salmon pasta', imageUrl: 'menu/pasta-salmon.jpg' },
+      { name: 'Soor with salmon', imageUrl: 'menu/soor-salmon.jpg' },
+      { name: 'Soor salmon', imageUrl: 'menu/soor-salmon.jpg' },
+      { name: 'Soor with salamon', imageUrl: 'menu/soor-salmon.jpg' },
+      { name: 'Pasta with salamon', imageUrl: 'menu/pasta-salmon.jpg' },
+    ];
+    for (const demo of demos) {
+      await prisma.menuItem.updateMany({
+        where: {
+          name: demo.name,
+          OR: [{ imageUrl: null }, { imageUrl: '' }],
+        },
+        data: { imageUrl: demo.imageUrl },
+      });
+    }
   }
   console.log('✅ Demo menu');
 

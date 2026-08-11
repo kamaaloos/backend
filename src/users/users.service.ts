@@ -85,13 +85,21 @@ export class UsersService {
       }
 
       case UserRole.RESTAURANT_OWNER: {
+        // Prisma omits `undefined` filters — never allow an unscoped list.
+        if (!currentUser.restaurantId) {
+          throw new ForbiddenException(
+            'User is not assigned to a restaurant.',
+          );
+        }
         where.restaurantId = currentUser.restaurantId;
         if (filters?.branchId) {
           const branch = await this.prisma.branch.findUnique({
             where: { id: filters.branchId },
           });
           if (!branch || branch.restaurantId !== currentUser.restaurantId) {
-            throw new ForbiddenException('You cannot access another restaurant.');
+            throw new ForbiddenException(
+              'You cannot access another restaurant.',
+            );
           }
           where.branchId = filters.branchId;
         }
@@ -99,6 +107,9 @@ export class UsersService {
       }
 
       case UserRole.BRANCH_MANAGER: {
+        if (!currentUser.branchId) {
+          throw new ForbiddenException('User is not assigned to a branch.');
+        }
         where.branchId = currentUser.branchId;
         break;
       }

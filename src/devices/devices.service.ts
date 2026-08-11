@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -7,8 +8,8 @@ import {
   OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
-import { DeviceStatus, DeviceType } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { Device, DeviceStatus, DeviceType } from '@prisma/client';
+import { randomBytes, randomUUID } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthorizationService } from '../common/authorization/authorization.service';
@@ -22,10 +23,27 @@ const DEVICE_STALE_MS = 60_000;
 /** How often to scan for stale devices. */
 const STALE_SWEEP_MS = 30_000;
 
+/** Default device token lifetime (override with DEVICE_TOKEN_TTL_DAYS). */
+const DEFAULT_TOKEN_TTL_DAYS = 7;
+/** One-time pairing code lifetime (override with DEVICE_PAIRING_CODE_TTL_MINUTES). */
+const DEFAULT_PAIRING_CODE_TTL_MINUTES = 10;
+
+/** Ambiguity-safe alphabet for short pairing codes. */
+const PAIRING_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const PAIRING_CODE_LENGTH = 8;
+
 const PICKUP_DISPLAY_TYPES: DeviceType[] = [
   DeviceType.CUSTOMER_DISPLAY,
   DeviceType.MANAGER,
 ];
+
+type DeviceRecord = Device & { branch?: unknown };
+
+export type StaffDeviceView = Omit<Device, 'token'> & {
+  /** Present only on create / rotate responses. */
+  token?: string;
+  tokenPreview: string;
+};
 
 @Injectable()
 export class DevicesService implements OnModuleInit, OnModuleDestroy {
@@ -51,18 +69,24 @@ export class DevicesService implements OnModuleInit, OnModuleDestroy {
 
   async create(user: JwtPayload, dto: CreateDeviceDto) {
     const branchId = await this.authorization.resolveBranch(user, dto.branchId);
+    const token = randomUUID();
+    const pairing = this.newPairingCode();
 
-    return this.prisma.device.create({
+    const device = await this.prisma.device.create({
       data: {
         branchId,
         name: dto.name,
         deviceType: dto.deviceType,
         appVersion: dto.appVersion,
-        token: randomUUID(),
+        token,
         tokenExpiresAt: this.tokenExpiryFromNow(),
+        pairingCode: pairing.code,
+        pairingCodeExpiresAt: pairing.expiresAt,
         status: DeviceStatus.OFFLINE,
       },
     });
+
+    return this.toStaffView(device, { includeToken: true });
   }
 
   async findAll(user: JwtPayload, branchIdQuery?: string) {
@@ -71,25 +95,29 @@ export class DevicesService implements OnModuleInit, OnModuleDestroy {
       branchIdQuery,
     );
 
-    return this.prisma.device.findMany({
+    const devices = await this.prisma.device.findMany({
       where: { branchId },
       orderBy: { createdAt: 'desc' },
     });
+
+    return devices.map((d) => this.toStaffView(d));
   }
 
   async findOne(id: string, user: JwtPayload) {
     const device = await this.getDeviceOrThrow(id);
     await this.authorization.canAccessBranch(user, device.branchId);
-    return device;
+    return this.toStaffView(device);
   }
 
   async update(id: string, user: JwtPayload, dto: UpdateDeviceDto) {
     await this.findOne(id, user);
 
-    return this.prisma.device.update({
+    const device = await this.prisma.device.update({
       where: { id },
       data: dto,
     });
+
+    return this.toStaffView(device);
   }
 
   async remove(id: string, user: JwtPayload) {
@@ -100,18 +128,113 @@ export class DevicesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Rotate device pairing token (staff only). */
+  /** Rotate device bearer token (staff only). Issues a fresh pairing code. */
   async rotateToken(id: string, user: JwtPayload) {
     await this.findOne(id, user);
+    const pairing = this.newPairingCode();
 
-    return this.prisma.device.update({
+    const device = await this.prisma.device.update({
       where: { id },
       data: {
         token: randomUUID(),
         tokenExpiresAt: this.tokenExpiryFromNow(),
+        pairingCode: pairing.code,
+        pairingCodeExpiresAt: pairing.expiresAt,
         status: DeviceStatus.OFFLINE,
       },
     });
+
+    return this.toStaffView(device, { includeToken: true });
+  }
+
+  /**
+   * Issue / refresh a short-lived one-time pairing code for QR URLs.
+   * Does not rotate the long-lived bearer token.
+   */
+  async issuePairingCode(id: string, user: JwtPayload) {
+    await this.findOne(id, user);
+    const pairing = this.newPairingCode();
+
+    const device = await this.prisma.device.update({
+      where: { id },
+      data: {
+        pairingCode: pairing.code,
+        pairingCodeExpiresAt: pairing.expiresAt,
+      },
+    });
+
+    return this.toStaffView(device);
+  }
+
+  /**
+   * Invalidate the current bearer token immediately and clear pairing codes.
+   * The device must be rotated (or deleted) before it can pair again.
+   */
+  async revoke(id: string, user: JwtPayload) {
+    await this.findOne(id, user);
+
+    const device = await this.prisma.device.update({
+      where: { id },
+      data: {
+        token: randomUUID(),
+        tokenExpiresAt: new Date(),
+        pairingCode: null,
+        pairingCodeExpiresAt: null,
+        status: DeviceStatus.OFFLINE,
+      },
+    });
+
+    return this.toStaffView(device);
+  }
+
+  /**
+   * Public: exchange a one-time pairing code for the long-lived device token.
+   * Code is cleared on success so QR URLs cannot be replayed.
+   */
+  async exchangePairingCode(rawCode: string) {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) {
+      throw new BadRequestException('Pairing code is required');
+    }
+
+    const device = await this.prisma.device.findUnique({
+      where: { pairingCode: code },
+    });
+
+    if (!device || !device.pairingCodeExpiresAt) {
+      throw new UnauthorizedException('Invalid or expired pairing code');
+    }
+
+    if (device.pairingCodeExpiresAt.getTime() <= Date.now()) {
+      await this.prisma.device.update({
+        where: { id: device.id },
+        data: { pairingCode: null, pairingCodeExpiresAt: null },
+      });
+      throw new UnauthorizedException('Invalid or expired pairing code');
+    }
+
+    this.assertTokenNotExpired(device.tokenExpiresAt);
+
+    const cleared = await this.prisma.device.update({
+      where: { id: device.id },
+      data: {
+        pairingCode: null,
+        pairingCodeExpiresAt: null,
+        status: DeviceStatus.ONLINE,
+        lastSeen: new Date(),
+      },
+    });
+
+    return {
+      token: cleared.token,
+      device: {
+        id: cleared.id,
+        name: cleared.name,
+        deviceType: cleared.deviceType,
+        branchId: cleared.branchId,
+        tokenExpiresAt: cleared.tokenExpiresAt,
+      },
+    };
   }
 
   /** Device authenticates with its token (no user JWT). */
@@ -219,17 +342,65 @@ export class DevicesService implements OnModuleInit, OnModuleDestroy {
     return result.count;
   }
 
+  /** Staff JSON: never leak bearer token unless explicitly requested once. */
+  toStaffView(
+    device: DeviceRecord,
+    options: { includeToken?: boolean } = {},
+  ): StaffDeviceView {
+    const { token, ...rest } = device;
+    const activePairing =
+      rest.pairingCode &&
+      rest.pairingCodeExpiresAt &&
+      rest.pairingCodeExpiresAt.getTime() > Date.now()
+        ? {
+            pairingCode: rest.pairingCode,
+            pairingCodeExpiresAt: rest.pairingCodeExpiresAt,
+          }
+        : { pairingCode: null, pairingCodeExpiresAt: null };
+
+    return {
+      ...rest,
+      ...activePairing,
+      tokenPreview: token.slice(0, 8),
+      ...(options.includeToken ? { token } : {}),
+    };
+  }
+
+  private newPairingCode() {
+    const bytes = randomBytes(PAIRING_CODE_LENGTH);
+    let code = '';
+    for (let i = 0; i < PAIRING_CODE_LENGTH; i++) {
+      code += PAIRING_CODE_ALPHABET[bytes[i]! % PAIRING_CODE_ALPHABET.length];
+    }
+    return {
+      code,
+      expiresAt: this.pairingCodeExpiryFromNow(),
+    };
+  }
+
   private tokenExpiryFromNow(): Date {
-    const days = Number(process.env.DEVICE_TOKEN_TTL_DAYS ?? 30);
-    const ttlDays = Number.isFinite(days) && days > 0 ? days : 30;
+    const days = Number(
+      process.env.DEVICE_TOKEN_TTL_DAYS ?? DEFAULT_TOKEN_TTL_DAYS,
+    );
+    const ttlDays =
+      Number.isFinite(days) && days > 0 ? days : DEFAULT_TOKEN_TTL_DAYS;
     return new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
   }
 
+  private pairingCodeExpiryFromNow(): Date {
+    const minutes = Number(
+      process.env.DEVICE_PAIRING_CODE_TTL_MINUTES ??
+        DEFAULT_PAIRING_CODE_TTL_MINUTES,
+    );
+    const ttl =
+      Number.isFinite(minutes) && minutes > 0
+        ? minutes
+        : DEFAULT_PAIRING_CODE_TTL_MINUTES;
+    return new Date(Date.now() + ttl * 60 * 1000);
+  }
+
   private assertTokenNotExpired(tokenExpiresAt: Date | null) {
-    if (
-      tokenExpiresAt &&
-      tokenExpiresAt.getTime() <= Date.now()
-    ) {
+    if (tokenExpiresAt && tokenExpiresAt.getTime() <= Date.now()) {
       throw new UnauthorizedException(
         'Device token has expired. Rotate the token in Admin and re-pair.',
       );

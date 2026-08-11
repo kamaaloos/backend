@@ -12,11 +12,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
 
 import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { DeviceHeartbeatDto } from './dto/device-heartbeat.dto';
+import { PairDeviceDto } from './dto/pair-device.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -39,6 +41,16 @@ export class DevicesController {
     }
 
     return this.devicesService.heartbeat(deviceToken, dto);
+  }
+
+  /**
+   * Public: exchange a one-time pairing code (from Admin QR) for a device token.
+   * Tightly rate-limited to slow brute-force of short codes.
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('pair')
+  pair(@Body() dto: PairDeviceDto) {
+    return this.devicesService.exchangePairingCode(dto.code);
   }
 
   @Post()
@@ -118,5 +130,27 @@ export class DevicesController {
   )
   rotateToken(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.devicesService.rotateToken(id, user);
+  }
+
+  @Post(':id/pairing-code')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+  )
+  issuePairingCode(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.devicesService.issuePairingCode(id, user);
+  }
+
+  @Post(':id/revoke')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+  )
+  revoke(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.devicesService.revoke(id, user);
   }
 }

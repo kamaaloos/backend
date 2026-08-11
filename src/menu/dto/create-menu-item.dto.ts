@@ -39,4 +39,8 @@ export class CreateMenuItemDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  available?: boolean;
 }

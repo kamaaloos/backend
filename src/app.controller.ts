@@ -1,10 +1,17 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Res, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import type { Response } from 'express';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { CurrentUser } from './auth/decorators/current-user.decorator';
 import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './redis/redis.service';
+import {
+  metricsContentType,
+  metricsText,
+  paymentSloSeconds,
+  prepSloSeconds,
+} from './telemetry/metrics';
 
 @Controller()
 export class AppController {
@@ -28,6 +35,33 @@ export class AppController {
       ok: true,
       database: true,
       redis: redisOk,
+    };
+  }
+
+  /** Prometheus scrape target (process histograms + defaults). */
+  @SkipThrottle()
+  @Get('metrics')
+  async metrics(@Res() res: Response) {
+    const body = await metricsText();
+    res.setHeader('Content-Type', metricsContentType());
+    res.send(body);
+  }
+
+  /** Thresholds for uptime monitors / operators (no auth). */
+  @SkipThrottle()
+  @Get('slo')
+  @Header('Cache-Control', 'no-store')
+  slo() {
+    return {
+      prep: {
+        thresholdSeconds: prepSloSeconds(),
+        metric: 'restaurant_prep_duration_seconds',
+      },
+      paymentSettle: {
+        thresholdSeconds: paymentSloSeconds(),
+        metric: 'restaurant_payment_settle_duration_seconds',
+      },
+      scrape: '/api/metrics',
     };
   }
 

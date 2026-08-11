@@ -17,21 +17,37 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthorizationService } from '../common/authorization/authorization.service';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
-import { CreatePaymentDto } from './dto/create-payment.dto';
+import { CreatePaymentDto, CreatePendingCashDto } from './dto/create-payment.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { PaymentProviderService } from './payment-provider';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import type { Span } from '@opentelemetry/api';
 import { withSpan } from '../telemetry/tracing';
+import { recordPaymentSettleDurationMs } from '../telemetry/metrics';
 import {
   balanceDue,
   isOrderFullyPaid,
   lineTotal,
 } from './payment-balance';
+import { resolvePaymentChannel } from './payment-channel';
 
+function observePaymentSettle(
+  createdAt: Date | string | null | undefined,
+  paidAt: Date | string | null | undefined,
+  span?: Span,
+) {
+  if (!paidAt || !createdAt) return;
+  const createdMs = new Date(createdAt).getTime();
+  const paidMs = new Date(paidAt).getTime();
+  if (!Number.isFinite(createdMs) || !Number.isFinite(paidMs)) return;
+  const ms = paidMs - createdMs;
+  span?.setAttribute('payment.settle_duration_ms', ms);
+  recordPaymentSettleDurationMs(ms);
+}
 type PaymentResponse = Payment & {
   currency: string;
   checkoutUrl?: string;
+  clientSecret?: string;
 };
 
 const ACTIVE_ORDER_STATUSES: OrderStatus[] = [
@@ -42,10 +58,12 @@ const ACTIVE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.SERVED,
 ];
 
+/** Owns PaymentLines for split-by-item. FAILED/VOIDED free lines; REFUNDED does not. */
 const ALLOCATING_STATUSES: PaymentStatus[] = [
   PaymentStatus.PENDING,
   PaymentStatus.PAID,
   PaymentStatus.PARTIALLY_REFUNDED,
+  PaymentStatus.REFUNDED,
 ];
 
 const orderEventInclude = {
@@ -62,10 +80,30 @@ export class PaymentsService {
     private readonly authorization: AuthorizationService,
     private readonly realtime: RealtimePublisher,
     private readonly paymentProvider: PaymentProviderService,
-  ) {}
+  ) { }
 
   getProviderConfig() {
     return this.paymentProvider.getPublicConfig();
+  }
+
+  /**
+   * Record Stripe evt_ id before processing. Returns false if already seen.
+   */
+  async claimStripeWebhookEvent(eventId: string, type: string): Promise<boolean> {
+    try {
+      await this.prisma.stripeWebhookEvent.create({
+        data: { id: eventId, type },
+      });
+      return true;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        return false;
+      }
+      throw err;
+    }
   }
 
   async create(user: JwtPayload, dto: CreatePaymentDto): Promise<PaymentResponse> {
@@ -79,10 +117,35 @@ export class PaymentsService {
     );
   }
 
+  /**
+   * Explicit till operation: record unpaid CASH to settle later via markPaid.
+   * Clients cannot choose PENDING on POST /payments — only this endpoint.
+   */
+  async createPendingCash(
+    user: JwtPayload,
+    dto: CreatePendingCashDto,
+  ): Promise<PaymentResponse> {
+    return withSpan(
+      'payment.create_pending_cash',
+      {
+        'order.id': dto.orderId,
+        'payment.method': PaymentMethod.CASH,
+      },
+      async (span) =>
+        this.createInner(
+          user,
+          { ...dto, method: PaymentMethod.CASH },
+          span,
+          { forcePendingCash: true },
+        ),
+    );
+  }
+
   private async createInner(
     user: JwtPayload,
     dto: CreatePaymentDto,
     span: Span,
+    opts?: { forcePendingCash?: boolean },
   ): Promise<PaymentResponse> {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
@@ -126,15 +189,32 @@ export class PaymentsService {
     }
 
     let status: PaymentStatus;
-    try {
-      status = this.paymentProvider.initialStatusFor(dto.method, dto.status);
-    } catch {
-      throw new BadRequestException(
-        'ONLINE payments require PAYMENT_PROVIDER=mock|stripe. Use CASH or CARD.',
-      );
+    if (opts?.forcePendingCash) {
+      if (dto.method !== PaymentMethod.CASH) {
+        throw new BadRequestException(
+          'Pending cash recording is only allowed for CASH',
+        );
+      }
+      status = PaymentStatus.PENDING;
+    } else {
+      try {
+        status = this.paymentProvider.initialStatusFor(dto.method);
+      } catch (err) {
+        const code = err instanceof Error ? err.message : '';
+        if (code === 'TERMINAL_REQUIRED') {
+          throw new BadRequestException(
+            'CARD requires Stripe Terminal. Use CARD_MANUAL for honor-system card, or enable Terminal.',
+          );
+        }
+        throw new BadRequestException(
+          'ONLINE payments require PAYMENT_PROVIDER=mock|stripe. Use CASH, CARD (Terminal), or CARD_MANUAL.',
+        );
+      }
     }
     const paidAt = status === PaymentStatus.PAID ? new Date() : null;
     const isOnline = dto.method === PaymentMethod.ONLINE;
+    const isTerminalCard = dto.method === PaymentMethod.CARD;
+    const channel = resolvePaymentChannel(dto.method);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
@@ -143,16 +223,20 @@ export class PaymentsService {
           amount,
           tipAmount,
           method: dto.method,
+          channel,
           status,
           paidAt,
-          provider: isOnline ? this.paymentProvider.getProviderId() : null,
+          provider:
+            isOnline || isTerminalCard
+              ? this.paymentProvider.getProviderId()
+              : null,
           lines: lines.length
             ? {
-                create: lines.map((line) => ({
-                  orderItemId: line.orderItemId,
-                  amount: line.amount,
-                })),
-              }
+              create: lines.map((line) => ({
+                orderItemId: line.orderItemId,
+                amount: line.amount,
+              })),
+            }
             : undefined,
         },
       });
@@ -180,7 +264,6 @@ export class PaymentsService {
           order.id,
           order.tableId,
           workingStatus,
-          order.mode,
           payments,
           Number(order.total),
         );
@@ -191,14 +274,15 @@ export class PaymentsService {
 
     let payment = result.payment;
     let checkoutUrl: string | undefined;
+    let clientSecret: string | undefined;
     if (isOnline) {
       const cashier = this.paymentProvider.cashierAppUrl();
       const checkout = await this.paymentProvider.createOnlineCheckout({
         paymentId: payment.id,
         orderId: order.id,
-        amount,
+        amount: payment.amount,
         currency: order.restaurant.currency,
-        tipAmount,
+        tipAmount: payment.tipAmount,
         successUrl: `${cashier}?paid=1&orderId=${order.id}`,
         cancelUrl: `${cashier}?paid=0&orderId=${order.id}`,
       });
@@ -211,17 +295,40 @@ export class PaymentsService {
       });
       checkoutUrl = checkout.checkoutUrl;
       span.setAttribute('payment.provider', checkout.provider);
+    } else if (isTerminalCard) {
+      const intent = await this.paymentProvider.createCardPresentIntent({
+        paymentId: payment.id,
+        orderId: order.id,
+        amount: payment.amount,
+        currency: order.restaurant.currency,
+        tipAmount: payment.tipAmount,
+      });
+      payment = await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          provider: intent.provider,
+          providerRef: intent.providerRef,
+        },
+      });
+      clientSecret = intent.clientSecret;
+      span.setAttribute('payment.provider', intent.provider);
+      span.setAttribute('payment.terminal', true);
     }
 
     span.setAttribute('payment.status', status);
     span.setAttribute('payment.amount', amount);
     span.setAttribute('payment.tip_amount', tipAmount);
     span.setAttribute('payment.cover', cover);
+    span.setAttribute('payment.channel', channel);
+    if (status === PaymentStatus.PAID) {
+      observePaymentSettle(payment.createdAt, payment.paidAt, span);
+    }
 
     const response: PaymentResponse = {
       ...payment,
       currency: order.restaurant.currency,
       checkoutUrl,
+      clientSecret,
     };
 
     this.realtime.publishPaymentUpdated({
@@ -331,6 +438,7 @@ export class PaymentsService {
           amount,
           tipAmount: 0,
           method,
+          channel: resolvePaymentChannel(method),
           status: PaymentStatus.PENDING,
           provider: this.paymentProvider.getProviderId(),
           lines: { create: lines },
@@ -342,9 +450,9 @@ export class PaymentsService {
       const checkout = await this.paymentProvider.createOnlineCheckout({
         paymentId: payment.id,
         orderId: order.id,
-        amount,
+        amount: payment.amount,
         currency: order.restaurant.currency,
-        tipAmount: 0,
+        tipAmount: payment.tipAmount,
         successUrl: `${customer}/w/${publicKey}/orders/${order.id}?paid=1`,
         cancelUrl: `${customer}/w/${publicKey}/orders/${order.id}?paid=0`,
       });
@@ -379,6 +487,23 @@ export class PaymentsService {
       };
     }
 
+    // Terminal CARD and Stripe honor-system must not settle from the phone.
+    // Use ONLINE Checkout, or CARD/CARD_MANUAL at the cashier.
+    if (
+      (method === PaymentMethod.CARD || method === PaymentMethod.CARD_MANUAL) &&
+      this.paymentProvider.getProviderId() === 'stripe'
+    ) {
+      throw new BadRequestException(
+        'Card capture requires Stripe Checkout (ONLINE) or Terminal/manual card at the cashier. Cannot settle card from the customer app.',
+      );
+    }
+
+    if (method === PaymentMethod.CARD) {
+      throw new BadRequestException(
+        'CARD is Terminal-only. Pay at the cashier reader, or use ONLINE Checkout.',
+      );
+    }
+
     const result = await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
         data: {
@@ -386,6 +511,7 @@ export class PaymentsService {
           amount,
           tipAmount: 0,
           method,
+          channel: resolvePaymentChannel(method),
           status: PaymentStatus.PAID,
           paidAt: new Date(),
           lines: { create: lines },
@@ -408,6 +534,8 @@ export class PaymentsService {
       ...result,
       currency: order.restaurant.currency,
     };
+
+    observePaymentSettle(result.createdAt, result.paidAt);
 
     this.realtime.publishPaymentUpdated({
       ...response,
@@ -479,16 +607,129 @@ export class PaymentsService {
 
     await this.authorization.canAccessBranch(user, payment.order.branchId);
 
-    if (
-      payment.method === PaymentMethod.ONLINE &&
-      payment.provider === 'stripe'
+    // Manual settle: CASH / CARD_MANUAL / mock ONLINE only.
+    // Never trust the UI to mark Stripe Terminal CARD as paid.
+    if (payment.method === PaymentMethod.CARD) {
+      throw new BadRequestException(
+        'CARD (Terminal) cannot be marked paid manually. Settle via Stripe webhook (payment_intent.succeeded).',
+      );
+    }
+
+    if (payment.method === PaymentMethod.ONLINE) {
+      if (payment.provider === 'stripe') {
+        throw new BadRequestException(
+          'Stripe Checkout settles via webhook (checkout.session.completed). Use mock provider for manual markPaid.',
+        );
+      }
+      // mock ONLINE: staff can complete after simulated checkout
+    } else if (
+      payment.method !== PaymentMethod.CASH &&
+      payment.method !== PaymentMethod.CARD_MANUAL
     ) {
       throw new BadRequestException(
-        'Stripe ONLINE payments settle via webhook (checkout.session.completed). Use mock provider for manual markPaid.',
+        'Only CASH, CARD_MANUAL, or mock ONLINE payments can be marked paid manually',
       );
     }
 
     return this.settlePendingPayment(payment);
+  }
+
+  /**
+   * Stripe-verified reconcile for Terminal intents (local/dev without webhooks).
+   * Primary authority remains payment_intent.succeeded → settleOnlineBy*.
+   * Callers must not treat the client processPayment result as paid by itself.
+   */
+  async confirmTerminalPayment(
+    id: string,
+    user: JwtPayload,
+  ): Promise<PaymentResponse> {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id },
+      include: {
+        order: {
+          include: {
+            payments: true,
+            restaurant: { select: { currency: true } },
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    await this.authorization.canAccessBranch(user, payment.order.branchId);
+
+    if (payment.status === PaymentStatus.PAID) {
+      const { order: _order, ...rest } = payment;
+      return { ...rest, currency: payment.order.restaurant.currency };
+    }
+
+    if (
+      payment.method !== PaymentMethod.CARD ||
+      payment.provider !== 'stripe' ||
+      !payment.providerRef
+    ) {
+      throw new BadRequestException(
+        'Only Stripe Terminal card payments can be reconciled this way',
+      );
+    }
+
+    const intent = await this.paymentProvider.retrievePaymentIntentStatus(
+      payment.providerRef,
+    );
+    if (intent.status !== 'succeeded') {
+      throw new BadRequestException(
+        `PaymentIntent is ${intent.status}, not succeeded yet`,
+      );
+    }
+
+    return this.settlePendingPayment(payment);
+  }
+
+  createTerminalConnectionToken() {
+    return this.paymentProvider.createTerminalConnectionToken();
+  }
+
+  listTerminalReaders() {
+    return this.paymentProvider.listTerminalReaders();
+  }
+
+  registerTerminalReader(dto: { registrationCode: string; label: string }) {
+    return this.paymentProvider.registerTerminalReader(dto);
+  }
+
+  async failPendingByProviderRef(providerRef: string) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { providerRef },
+      include: {
+        order: {
+          include: {
+            restaurant: { select: { currency: true } },
+          },
+        },
+      },
+    });
+    if (!payment || payment.status !== PaymentStatus.PENDING) {
+      return null;
+    }
+
+    const failed = await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: PaymentStatus.FAILED },
+    });
+
+    const response = {
+      ...failed,
+      currency: payment.order.restaurant.currency,
+    };
+    this.realtime.publishPaymentUpdated({
+      ...response,
+      restaurantId: payment.order.restaurantId,
+      branchId: payment.order.branchId,
+    });
+    return response;
   }
 
   async settleOnlineById(paymentId: string, providerRef?: string) {
@@ -596,7 +837,6 @@ export class PaymentsService {
         payment.orderId,
         payment.order.tableId,
         workingStatus,
-        payment.order.mode,
         payments,
         Number(payment.order.total),
       );
@@ -608,6 +848,11 @@ export class PaymentsService {
       ...result.payment,
       currency,
     };
+
+    observePaymentSettle(
+      payment.createdAt,
+      result.payment.paidAt,
+    );
 
     this.realtime.publishPaymentUpdated({
       ...response,
@@ -681,7 +926,7 @@ export class PaymentsService {
 
     const refundAmount =
       dto.amount != null ? Number(dto.amount) : remaining;
-    if (refundAmount <= 0) {
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
       throw new BadRequestException('Refund amount must be positive');
     }
     if (refundAmount > remaining + 0.001) {
@@ -699,20 +944,41 @@ export class PaymentsService {
     span.setAttribute('payment.refund_amount', refundAmount);
     span.setAttribute('payment.status', status);
 
+    // Stripe idempotency: same payment + cumulative refunded total = same key.
+    const idempotencyKey = `refund_${payment.id}_${Math.round(newRefunded * 100)}`;
+
     await this.paymentProvider.refundOnline({
       provider: payment.provider,
       providerRef: payment.providerRef,
       amount: refundAmount,
       currency: payment.order.restaurant.currency,
+      idempotencyKey,
     });
 
-    const updated = await this.prisma.payment.update({
-      where: { id },
+    // Optimistic concurrency: only succeed if refundedAmount is still what we read.
+    const updatedCount = await this.prisma.payment.updateMany({
+      where: {
+        id,
+        refundedAmount: payment.refundedAmount,
+        status: {
+          in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED],
+        },
+      },
       data: {
         refundedAmount: newRefunded,
         status,
         refundedAt: new Date(),
       },
+    });
+
+    if (updatedCount.count !== 1) {
+      throw new ConflictException(
+        'Payment was modified concurrently — refresh and retry the refund',
+      );
+    }
+
+    const updated = await this.prisma.payment.findUniqueOrThrow({
+      where: { id },
     });
 
     const response = {
@@ -745,6 +1011,7 @@ export class PaymentsService {
     dto: CreatePaymentDto,
     remaining: number,
   ): { cover: number; lines: { orderItemId: string; amount: number }[] } {
+    // Split is line-level (whole OrderItem rows), not per-unit quantity.
     const hasItems = (dto.orderItemIds?.length ?? 0) > 0;
     const hasSeats = (dto.seatNumbers?.length ?? 0) > 0;
     if (hasItems && hasSeats) {
@@ -824,7 +1091,14 @@ export class PaymentsService {
     if (method === PaymentMethod.ONLINE || method === 'ONLINE') {
       if (!this.paymentProvider.isOnlineEnabled()) {
         throw new BadRequestException(
-          'ONLINE payments require PAYMENT_PROVIDER=mock|stripe. Use CASH or CARD.',
+          'ONLINE payments require PAYMENT_PROVIDER=mock|stripe. Use CASH, CARD (Terminal), or CARD_MANUAL.',
+        );
+      }
+    }
+    if (method === PaymentMethod.CARD || method === 'CARD') {
+      if (!this.paymentProvider.isTerminalEnabled()) {
+        throw new BadRequestException(
+          'CARD requires Stripe Terminal. Use CARD_MANUAL for honor-system card, or enable Terminal.',
         );
       }
     }
@@ -905,7 +1179,6 @@ export class PaymentsService {
     orderId: string,
     tableId: string | null,
     currentStatus: OrderStatus,
-    mode: OrderMode,
     payments: { amount: unknown; tipAmount?: unknown; refundedAmount?: unknown; status: PaymentStatus | string }[],
     orderTotal: number,
   ): Promise<boolean> {
@@ -917,11 +1190,9 @@ export class PaymentsService {
       return false;
     }
 
-    const canComplete =
-      currentStatus === OrderStatus.SERVED ||
-      (currentStatus === OrderStatus.READY && mode === OrderMode.WALK_IN);
-
-    if (!canComplete) {
+    // Walk-in READY stays on the pickup board until staff marks Picked up.
+    // Only SERVED (dine-in) auto-completes when payment lands.
+    if (currentStatus !== OrderStatus.SERVED) {
       return false;
     }
 

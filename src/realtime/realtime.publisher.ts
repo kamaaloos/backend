@@ -165,6 +165,13 @@ export class RealtimePublisher {
       RealtimeEvents.SERVICE_REQUEST_CREATED,
       event,
     );
+    this.publishToTableCustomer(
+      event.restaurantId,
+      event.branchId,
+      event.tableId,
+      RealtimeEvents.SERVICE_REQUEST_CREATED,
+      event,
+    );
   }
 
   publishServiceRequestUpdated(event: ServiceRequestEvent) {

@@ -162,7 +162,6 @@ describe('Order flow (e2e)', () => {
       .send({
         orderId,
         method: 'CASH',
-        status: 'PAID',
       });
     expect([200, 201]).toContain(payment.status);
     expect(payment.body.status).toBe('PAID');

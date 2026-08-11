@@ -1,6 +1,7 @@
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -46,6 +47,14 @@ export class PlaceCustomerOrderDto {
   @IsOptional()
   @IsString()
   customerName?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isRush?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isVip?: boolean;
 
   @IsArray()
   @ValidateNested({ each: true })

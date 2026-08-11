@@ -92,6 +92,13 @@ model Device {
   /** Null = no expiry (legacy). New/rotated tokens set a TTL. */
   tokenExpiresAt DateTime?
 
+  /**
+   * One-time short code for QR pairing. Cleared after successful exchange
+   * or when expired. Prefer embedding this in pair URLs instead of `token`.
+   */
+  pairingCode          String?   @unique
+  pairingCodeExpiresAt DateTime?
+
   lastSeen    DateTime?
 
   appVersion  String?
@@ -153,6 +160,12 @@ model Order {
   queueNumber   Int?
 
   customerName  String?
+
+  /** Expedite for kitchen (badge + sort). */
+  isRush        Boolean @default(false)
+
+  /** VIP table / guest (badge). */
+  isVip         Boolean @default(false)
 
   status        OrderStatus @default(NEW)
 
@@ -237,6 +250,12 @@ model Payment {
   method PaymentMethod
   status PaymentStatus @default(PENDING)
 
+  /**
+   * How the payment was taken (reporting): CASH till, Stripe Terminal,
+   * ONLINE Checkout, or COUNTER honor-system card (no Terminal).
+   */
+  channel PaymentChannel @default(CASH)
+
   /** none | mock | stripe — which ONLINE path created this row. */
   provider String?
 
@@ -253,6 +272,14 @@ model Payment {
 
   @@index([orderId])
   @@index([status])
+  @@index([channel])
+}
+
+/** Dedupes Stripe webhook deliveries (evt_…). */
+model StripeWebhookEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
 }
 
 /** Allocates a payment to specific order lines (split-by-item / seat). */
@@ -293,7 +320,10 @@ model MenuItem {
   description  String?
   price        Decimal      @db.Decimal(10, 2)
   imageUrl     String?
+  /** On the catalog (false = soft-removed / hidden from customer). */
   active       Boolean      @default(true)
+  /** Temporarily orderable (false = sold out / finished — still visible). */
+  available    Boolean      @default(true)
   createdAt    DateTime     @default(now())
   category     MenuCategory @relation(fields: [categoryId], references: [id])
   restaurant   Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
@@ -469,8 +499,19 @@ enum TableStatus {
 
 enum PaymentMethod {
   CASH
+  /** Stripe Terminal card-present — never honor-system PAID. */
   CARD
+  /** Explicit till honor-system card (no reader / Terminal off). */
+  CARD_MANUAL
   ONLINE
+}
+
+/** Capture path for reporting (orthogonal to method + provider). */
+enum PaymentChannel {
+  CASH
+  TERMINAL
+  ONLINE
+  COUNTER
 }
 
 enum PaymentStatus {

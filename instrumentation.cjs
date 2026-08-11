@@ -70,7 +70,7 @@ const sdk = new NodeSDK({
       '@opentelemetry/instrumentation-http': {
         ignoreIncomingRequestHook: (req) => {
           const url = req.url || '';
-          return url.includes('/health') || url.includes('/ready');
+          return url.includes('/health') || url.includes('/ready') || url.includes('/metrics') || url.includes('/slo');
         },
       },
     }),

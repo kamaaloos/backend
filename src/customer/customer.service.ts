@@ -333,6 +333,29 @@ export class CustomerService {
     };
   }
 
+  async cancelWalkInOrder(walkInToken: string, orderId: string) {
+    const branch = await this.resolveWalkInBranch(walkInToken);
+    return this.cancelCustomerOrder({
+      orderId,
+      where: {
+        id: orderId,
+        branchId: branch.id,
+        mode: OrderMode.WALK_IN,
+      },
+    });
+  }
+
+  async cancelTableOrder(token: string, orderId: string) {
+    const table = await this.resolveTable(token);
+    return this.cancelCustomerOrder({
+      orderId,
+      where: {
+        id: orderId,
+        tableId: table.id,
+      },
+    });
+  }
+
   /**
    * Overhead TV board (device-authenticated): Preparing / Ready.
    * NEW / PENDING_PAYMENT orders are excluded until kitchen accepts.
@@ -450,6 +473,27 @@ export class CustomerService {
     return request;
   }
 
+  /** Public: open call-waiter / request-bill for this table QR. */
+  async listOpenServiceRequestsForTable(token: string) {
+    const table = await this.resolveTable(token);
+    return this.prisma.serviceRequest.findMany({
+      where: {
+        tableId: table.id,
+        status: {
+          in: [ServiceRequestStatus.PENDING, ServiceRequestStatus.ACKNOWLEDGED],
+        },
+      },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        note: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   async listServiceRequestsForStaff(branchId: string) {
     return this.prisma.serviceRequest.findMany({
       where: {
@@ -479,6 +523,128 @@ export class CustomerService {
     );
   }
 
+  /**
+   * Guest self-cancel: only before kitchen acceptance, and only if unpaid.
+   * PENDING_PAYMENT (walk-in) or NEW (dine-in / unpaid).
+   */
+  private async cancelCustomerOrder(input: {
+    where: {
+      id: string;
+      branchId?: string;
+      tableId?: string | null;
+      mode?: OrderMode;
+    };
+  }) {
+    const order = await this.prisma.order.findFirst({
+      where: input.where,
+      include: {
+        items: {
+          include: {
+            menuItem: true,
+            modifiers: true,
+          },
+        },
+        payments: true,
+        table: true,
+        restaurant: { select: { currency: true } },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (
+      order.status !== OrderStatus.PENDING_PAYMENT &&
+      order.status !== OrderStatus.NEW
+    ) {
+      throw new BadRequestException(
+        'This order can no longer be cancelled. Ask staff for help.',
+      );
+    }
+
+    const settled = order.payments.some(
+      (p) =>
+        p.status === PaymentStatus.PAID ||
+        p.status === PaymentStatus.PARTIALLY_REFUNDED,
+    );
+    if (settled) {
+      throw new BadRequestException(
+        'Paid orders cannot be cancelled here. Ask staff for a refund.',
+      );
+    }
+
+    const previousStatus = order.status;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.payment.updateMany({
+        where: {
+          orderId: order.id,
+          status: PaymentStatus.PENDING,
+        },
+        data: { status: PaymentStatus.VOIDED },
+      });
+
+      const cancelled = await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.CANCELLED,
+          items: {
+            updateMany: {
+              where: { orderId: order.id },
+              data: { status: OrderStatus.CANCELLED },
+            },
+          },
+        },
+        include: {
+          items: {
+            include: {
+              menuItem: true,
+              modifiers: true,
+            },
+          },
+          payments: true,
+          table: true,
+          restaurant: { select: { currency: true } },
+        },
+      });
+
+      if (order.tableId) {
+        const stillActive = await tx.order.count({
+          where: {
+            tableId: order.tableId,
+            status: {
+              in: [
+                OrderStatus.PENDING_PAYMENT,
+                OrderStatus.NEW,
+                OrderStatus.ACCEPTED,
+                OrderStatus.PREPARING,
+                OrderStatus.READY,
+                OrderStatus.SERVED,
+              ],
+            },
+          },
+        });
+        if (stillActive === 0) {
+          await tx.table.update({
+            where: { id: order.tableId },
+            data: { status: TableStatus.AVAILABLE },
+          });
+        }
+      }
+
+      return cancelled;
+    });
+
+    const { restaurant, ...rest } = updated;
+    const response = withPaymentCompat(rest, restaurant.currency);
+    this.realtime.publishOrderStatusChanged(
+      { ...rest, currency: restaurant.currency },
+      previousStatus,
+    );
+    return response;
+  }
+
   private async createCustomerOrder(input: {
     restaurantId: string;
     branchId: string;
@@ -498,6 +664,7 @@ export class CustomerService {
         id: { in: menuItemIds },
         restaurantId: input.restaurantId,
         active: true,
+        available: true,
       },
       include: {
         modifierGroups: {
@@ -576,6 +743,8 @@ export class CustomerService {
           mode: input.mode,
           queueNumber,
           customerName: input.dto.customerName ?? 'Guest',
+          isRush: input.dto.isRush === true,
+          isVip: input.dto.isVip === true,
           createdById: null,
           total,
           // Walk-in must prepay before kitchen sees the ticket.

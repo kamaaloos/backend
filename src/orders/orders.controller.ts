@@ -84,6 +84,58 @@ export class OrdersController {
     return this.ordersService.findForWaiter(user, branchId, status);
   }
 
+  /** Cashier payments board: active + unpaid completed recovery. */
+  @Get('open-bills')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+    UserRole.CASHIER,
+  )
+  openBills(
+    @CurrentUser() user: JwtPayload,
+    @Query('branchId') branchId?: string,
+  ) {
+    return this.ordersService.findForCashier(user, branchId);
+  }
+
+  /** @deprecated Prefer open-bills — kept so old clients do not hit :id. */
+  @Get('cashier')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+    UserRole.CASHIER,
+  )
+  cashier(
+    @CurrentUser() user: JwtPayload,
+    @Query('branchId') branchId?: string,
+  ) {
+    return this.ordersService.findForCashier(user, branchId);
+  }
+
+  /** Closed checks paid in the cashier's local day (from/to ISO). */
+  @Get('today-paid')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+    UserRole.CASHIER,
+  )
+  todayPaid(
+    @CurrentUser() user: JwtPayload,
+    @Query('branchId') branchId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.ordersService.findTodayPaidForCashier(
+      user,
+      branchId,
+      from,
+      to,
+    );
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.ordersService.findOne(id, user);

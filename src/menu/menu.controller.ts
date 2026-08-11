@@ -17,6 +17,7 @@ import { UpdateMenuCategoryDto } from './dto/update-menu-category.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import { CreateModifierGroupDto } from './dto/create-modifier-group.dto';
+import { SetMenuItemAvailabilityDto } from './dto/set-menu-item-availability.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -150,6 +151,24 @@ export class MenuController {
     @Body() dto: UpdateMenuItemDto,
   ) {
     return this.menuService.updateItem(id, user, dto);
+  }
+
+  /** Floor staff: mark sold out / restore without full menu edit rights. */
+  @Patch('items/:id/availability')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+    UserRole.WAITER,
+    UserRole.CHEF,
+    UserRole.CASHIER,
+  )
+  setItemAvailability(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: SetMenuItemAvailabilityDto,
+  ) {
+    return this.menuService.setItemAvailability(id, user, dto.available);
   }
 
   @Delete('items/:id')

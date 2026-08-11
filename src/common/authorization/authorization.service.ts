@@ -34,12 +34,22 @@ export class AuthorizationService {
         };
 
       case UserRole.RESTAURANT_OWNER:
+        if (!currentUser.restaurantId) {
+          throw new ForbiddenException(
+            'User is not assigned to a restaurant.',
+          );
+        }
         return {
           restaurantId: currentUser.restaurantId,
           branchId: dto.branchId ?? null,
         };
 
       case UserRole.BRANCH_MANAGER:
+        if (!currentUser.restaurantId || !currentUser.branchId) {
+          throw new ForbiddenException(
+            'User is not assigned to a restaurant branch.',
+          );
+        }
         return {
           restaurantId: currentUser.restaurantId,
           branchId: currentUser.branchId,

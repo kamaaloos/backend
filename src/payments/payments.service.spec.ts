@@ -13,18 +13,21 @@ describe('PaymentsService status machine', () => {
   };
   const paymentProvider = {
     isOnlineEnabled: jest.fn().mockReturnValue(false),
+    isTerminalEnabled: jest.fn().mockReturnValue(false),
     initialStatusFor: jest.fn(
-      (_method: string, requested?: PaymentStatus) =>
-        requested ?? PaymentStatus.PAID,
+      (_method: string): PaymentStatus => PaymentStatus.PAID,
     ),
     getProviderId: jest.fn().mockReturnValue('none'),
     createOnlineCheckout: jest.fn(),
+    createCardPresentIntent: jest.fn(),
+    createTerminalConnectionToken: jest.fn(),
     refundOnline: jest.fn().mockResolvedValue(undefined),
     cashierAppUrl: jest.fn().mockReturnValue('http://localhost:3005'),
     customerAppUrl: jest.fn().mockReturnValue('http://localhost:3001'),
     getPublicConfig: jest.fn().mockReturnValue({
       provider: 'none',
       onlineEnabled: false,
+      terminalEnabled: false,
       publishableKey: null,
     }),
   };
@@ -41,9 +44,9 @@ describe('PaymentsService status machine', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     paymentProvider.isOnlineEnabled.mockReturnValue(false);
+    paymentProvider.isTerminalEnabled.mockReturnValue(false);
     paymentProvider.initialStatusFor.mockImplementation(
-      (_method: string, requested?: PaymentStatus) =>
-        requested ?? PaymentStatus.PAID,
+      (_method: string): PaymentStatus => PaymentStatus.PAID,
     );
   });
 
@@ -96,7 +99,7 @@ describe('PaymentsService status machine', () => {
         restaurantId: 'r-1',
         branchId: 'br-1',
       },
-      { orderId: 'ord-1', method: PaymentMethod.CASH, status: PaymentStatus.PAID },
+      { orderId: 'ord-1', method: PaymentMethod.CASH },
     );
 
     expect(result.status).toBe(PaymentStatus.PAID);
@@ -114,7 +117,7 @@ describe('PaymentsService status machine', () => {
       orderId: 'ord-2',
       amount: 30,
       tipAmount: 0,
-      method: PaymentMethod.CARD,
+      method: PaymentMethod.CARD_MANUAL,
       status: PaymentStatus.PAID,
       paidAt: new Date(),
     });
@@ -165,7 +168,7 @@ describe('PaymentsService status machine', () => {
         restaurantId: 'r-1',
         branchId: 'br-1',
       },
-      { orderId: 'ord-2', method: PaymentMethod.CARD, status: PaymentStatus.PAID },
+      { orderId: 'ord-2', method: PaymentMethod.CARD_MANUAL },
     );
 
     expect(orderUpdate).toHaveBeenCalledWith(
@@ -176,7 +179,7 @@ describe('PaymentsService status machine', () => {
     expect(realtime.publishOrderStatusChanged).toHaveBeenCalled();
   });
 
-  it('completes a READY walk-in order when payment is PAID', async () => {
+  it('keeps a READY walk-in order READY when payment is PAID (pickup until collected)', async () => {
     const orderUpdate = jest.fn().mockResolvedValue({});
     const paymentCreate = jest.fn().mockResolvedValue({
       id: 'pay-3',
@@ -208,7 +211,7 @@ describe('PaymentsService status machine', () => {
             branchId: 'br-1',
             restaurantId: 'r-1',
             tableId: null,
-            status: OrderStatus.COMPLETED,
+            status: OrderStatus.READY,
             mode: 'WALK_IN',
             table: null,
             items: [],
@@ -235,15 +238,11 @@ describe('PaymentsService status machine', () => {
         restaurantId: 'r-1',
         branchId: 'br-1',
       },
-      { orderId: 'ord-3', method: PaymentMethod.CASH, status: PaymentStatus.PAID },
+      { orderId: 'ord-3', method: PaymentMethod.CASH },
     );
 
-    expect(orderUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: OrderStatus.COMPLETED }),
-      }),
-    );
-    expect(realtime.publishOrderStatusChanged).toHaveBeenCalled();
+    expect(orderUpdate).not.toHaveBeenCalled();
+    expect(paymentCreate).toHaveBeenCalled();
   });
 
   it('rejects amount that does not match order total + tip', async () => {
@@ -279,7 +278,6 @@ describe('PaymentsService status machine', () => {
         {
           orderId: 'ord-4',
           method: PaymentMethod.CASH,
-          status: PaymentStatus.PAID,
           amount: 25,
         },
       ),
@@ -294,7 +292,7 @@ describe('PaymentsService status machine', () => {
       orderId: 'ord-5',
       amount: 25,
       tipAmount: 5,
-      method: PaymentMethod.CARD,
+      method: PaymentMethod.CARD_MANUAL,
       status: PaymentStatus.PAID,
       paidAt: new Date(),
     });
@@ -335,9 +333,8 @@ describe('PaymentsService status machine', () => {
       },
       {
         orderId: 'ord-5',
-        method: PaymentMethod.CARD,
+        method: PaymentMethod.CARD_MANUAL,
         tipAmount: 5,
-        status: PaymentStatus.PAID,
       },
     );
 
@@ -454,7 +451,8 @@ describe('PaymentsService status machine', () => {
   });
 
   it('fully refunds a PAID payment', async () => {
-    const paymentUpdate = jest.fn().mockResolvedValue({
+    const paymentUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const refundedRow = {
       id: 'pay-r1',
       orderId: 'ord-r1',
       amount: 20,
@@ -463,7 +461,7 @@ describe('PaymentsService status machine', () => {
       method: PaymentMethod.CARD,
       status: PaymentStatus.REFUNDED,
       refundedAt: new Date(),
-    });
+    };
 
     const prisma = {
       payment: {
@@ -474,6 +472,8 @@ describe('PaymentsService status machine', () => {
           tipAmount: 0,
           refundedAmount: 0,
           status: PaymentStatus.PAID,
+          provider: null,
+          providerRef: null,
           order: {
             branchId: 'br-1',
             restaurantId: 'r-1',
@@ -481,7 +481,8 @@ describe('PaymentsService status machine', () => {
             restaurant: { currency: 'EUR' },
           },
         }),
-        update: paymentUpdate,
+        updateMany: paymentUpdateMany,
+        findUniqueOrThrow: jest.fn().mockResolvedValue(refundedRow),
       },
     };
 
@@ -499,7 +500,7 @@ describe('PaymentsService status machine', () => {
       {},
     );
 
-    expect(paymentUpdate).toHaveBeenCalledWith(
+    expect(paymentUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           refundedAmount: 20,
@@ -511,12 +512,13 @@ describe('PaymentsService status machine', () => {
   });
 
   it('partially refunds and rejects over-refund', async () => {
-    const paymentUpdate = jest.fn().mockResolvedValue({
+    const paymentUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const partialRow = {
       id: 'pay-r2',
       amount: 30,
       refundedAmount: 10,
       status: PaymentStatus.PARTIALLY_REFUNDED,
-    });
+    };
 
     const prisma = {
       payment: {
@@ -527,6 +529,8 @@ describe('PaymentsService status machine', () => {
           tipAmount: 0,
           refundedAmount: 0,
           status: PaymentStatus.PAID,
+          provider: null,
+          providerRef: null,
           order: {
             branchId: 'br-1',
             restaurantId: 'r-1',
@@ -534,7 +538,8 @@ describe('PaymentsService status machine', () => {
             restaurant: { currency: 'EUR' },
           },
         }),
-        update: paymentUpdate,
+        updateMany: paymentUpdateMany,
+        findUniqueOrThrow: jest.fn().mockResolvedValue(partialRow),
       },
     };
 
@@ -549,7 +554,7 @@ describe('PaymentsService status machine', () => {
     };
 
     await service.refund('pay-r2', user, { amount: 10 });
-    expect(paymentUpdate).toHaveBeenCalledWith(
+    expect(paymentUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           refundedAmount: 10,
@@ -565,6 +570,8 @@ describe('PaymentsService status machine', () => {
       tipAmount: 0,
       refundedAmount: 10,
       status: PaymentStatus.PARTIALLY_REFUNDED,
+      provider: null,
+      providerRef: null,
       order: {
         branchId: 'br-1',
         restaurantId: 'r-1',
@@ -576,5 +583,368 @@ describe('PaymentsService status machine', () => {
     await expect(
       service.refund('pay-r2', user, { amount: 25 }),
     ).rejects.toThrow('Refund exceeds remaining balance');
+  });
+
+  it('rejects concurrent refund when refundedAmount changed', async () => {
+    const prisma = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay-race',
+          orderId: 'ord-race',
+          amount: 40,
+          tipAmount: 0,
+          refundedAmount: 0,
+          status: PaymentStatus.PAID,
+          provider: null,
+          providerRef: null,
+          order: {
+            branchId: 'br-1',
+            restaurantId: 'r-1',
+            status: OrderStatus.COMPLETED,
+            restaurant: { currency: 'EUR' },
+          },
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUniqueOrThrow: jest.fn(),
+      },
+    };
+
+    const service = buildService(prisma);
+    await expect(
+      service.refund(
+        'pay-race',
+        {
+          sub: 'u1',
+          id: 'u1',
+          email: 'c@x',
+          role: 'CASHIER' as never,
+          restaurantId: 'r-1',
+          branchId: 'br-1',
+        },
+        { amount: 10 },
+      ),
+    ).rejects.toThrow(/concurrently/i);
+  });
+});
+
+describe('PaymentsService payment authority', () => {
+  const authorization = {
+    canAccessBranch: jest.fn().mockResolvedValue(undefined),
+  };
+  const realtime = {
+    publishPaymentUpdated: jest.fn(),
+    publishOrderStatusChanged: jest.fn(),
+  };
+  const paymentProvider = {
+    isOnlineEnabled: jest.fn().mockReturnValue(true),
+    isTerminalEnabled: jest.fn().mockReturnValue(true),
+    getProviderId: jest.fn().mockReturnValue('stripe'),
+    initialStatusFor: jest.fn(
+      (_method: string): PaymentStatus => PaymentStatus.PAID,
+    ),
+    retrievePaymentIntentStatus: jest.fn(),
+    customerAppUrl: jest.fn().mockReturnValue('http://localhost:3001'),
+  };
+
+  const user = {
+    sub: 'u1',
+    id: 'u1',
+    email: 'c@x',
+    role: 'CASHIER' as never,
+    restaurantId: 'r-1',
+    branchId: 'br-1',
+  };
+
+  function buildService(prisma: Record<string, unknown>) {
+    return new PaymentsService(
+      prisma as never,
+      authorization as never,
+      realtime as never,
+      paymentProvider as unknown as PaymentProviderService,
+    );
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    paymentProvider.getProviderId.mockReturnValue('stripe');
+  });
+
+  it('refuses CARD when Terminal is disabled', async () => {
+    const prisma = {
+      order: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ord-term-off',
+          branchId: 'br-1',
+          restaurantId: 'r-1',
+          tableId: 't-1',
+          status: OrderStatus.NEW,
+          mode: 'DINE_IN',
+          total: 10,
+          payments: [],
+          items: [],
+          restaurant: { currency: 'EUR' },
+        }),
+      },
+      payment: {},
+      $transaction: jest.fn(),
+    };
+
+    paymentProvider.isTerminalEnabled.mockReturnValue(false);
+    const service = buildService(prisma);
+    await expect(
+      service.create(user, {
+        orderId: 'ord-term-off',
+        method: PaymentMethod.CARD,
+      }),
+    ).rejects.toThrow(/CARD_MANUAL|Terminal/i);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('createPendingCash records CASH as PENDING without client status', async () => {
+    const paymentCreate = jest.fn().mockResolvedValue({
+      id: 'pay-pend',
+      orderId: 'ord-pend',
+      amount: 12,
+      tipAmount: 0,
+      method: PaymentMethod.CASH,
+      channel: 'CASH',
+      status: PaymentStatus.PENDING,
+      paidAt: null,
+    });
+    const prisma = {
+      order: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ord-pend',
+          branchId: 'br-1',
+          restaurantId: 'r-1',
+          tableId: 't-1',
+          status: OrderStatus.NEW,
+          mode: 'DINE_IN',
+          total: 12,
+          payments: [],
+          items: [],
+          restaurant: { currency: 'EUR' },
+        }),
+      },
+      payment: {},
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          payment: { create: paymentCreate },
+          order: { update: jest.fn(), count: jest.fn() },
+          table: { update: jest.fn() },
+        }),
+      ),
+    };
+
+    const service = buildService(prisma);
+    const result = await service.createPendingCash(user, {
+      orderId: 'ord-pend',
+    });
+
+    expect(result.status).toBe(PaymentStatus.PENDING);
+    expect(paymentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          method: PaymentMethod.CASH,
+          status: PaymentStatus.PENDING,
+          paidAt: null,
+        }),
+      }),
+    );
+    expect(paymentProvider.initialStatusFor).not.toHaveBeenCalled();
+  });
+
+  it('refuses markPaid for CARD payments', async () => {
+    const prisma = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay-card',
+          method: PaymentMethod.CARD,
+          provider: 'stripe',
+          status: PaymentStatus.PENDING,
+          providerRef: 'pi_1',
+          order: {
+            branchId: 'br-1',
+            restaurantId: 'r-1',
+            status: OrderStatus.NEW,
+            payments: [],
+            restaurant: { currency: 'EUR' },
+          },
+        }),
+      },
+    };
+
+    const service = buildService(prisma);
+    await expect(service.markPaid('pay-card', user)).rejects.toThrow(
+      /cannot be marked paid manually/i,
+    );
+  });
+
+  it('refuses markPaid for Stripe ONLINE payments', async () => {
+    const prisma = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay-online',
+          method: PaymentMethod.ONLINE,
+          provider: 'stripe',
+          status: PaymentStatus.PENDING,
+          providerRef: 'cs_1',
+          order: {
+            branchId: 'br-1',
+            restaurantId: 'r-1',
+            status: OrderStatus.NEW,
+            payments: [],
+            restaurant: { currency: 'EUR' },
+          },
+        }),
+      },
+    };
+
+    const service = buildService(prisma);
+    await expect(service.markPaid('pay-online', user)).rejects.toThrow(
+      /webhook/i,
+    );
+  });
+
+  it('allows markPaid for CASH pending payments', async () => {
+    const paid = {
+      id: 'pay-cash',
+      orderId: 'ord-1',
+      method: PaymentMethod.CASH,
+      provider: null,
+      status: PaymentStatus.PAID,
+      paidAt: new Date(),
+      amount: 10,
+      tipAmount: 0,
+    };
+    const paymentUpdate = jest.fn().mockResolvedValue(paid);
+    const prisma = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay-cash',
+          orderId: 'ord-1',
+          method: PaymentMethod.CASH,
+          provider: null,
+          status: PaymentStatus.PENDING,
+          amount: 10,
+          tipAmount: 0,
+          order: {
+            id: 'ord-1',
+            branchId: 'br-1',
+            restaurantId: 'r-1',
+            status: OrderStatus.NEW,
+            mode: 'DINE_IN',
+            tableId: 't-1',
+            total: 10,
+            payments: [
+              {
+                id: 'pay-cash',
+                status: PaymentStatus.PENDING,
+                amount: 10,
+                tipAmount: 0,
+              },
+            ],
+            restaurant: { currency: 'EUR' },
+          },
+        }),
+      },
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          payment: { update: paymentUpdate },
+          order: { update: jest.fn(), count: jest.fn() },
+          table: { update: jest.fn() },
+        }),
+      ),
+    };
+
+    const service = buildService(prisma);
+    const result = await service.markPaid('pay-cash', user);
+    expect(result.status).toBe(PaymentStatus.PAID);
+    expect(paymentUpdate).toHaveBeenCalled();
+  });
+
+  it('reconciles Terminal only when Stripe PaymentIntent succeeded', async () => {
+    paymentProvider.retrievePaymentIntentStatus.mockResolvedValue({
+      status: 'succeeded',
+    });
+    const paid = {
+      id: 'pay-term',
+      orderId: 'ord-1',
+      method: PaymentMethod.CARD,
+      provider: 'stripe',
+      providerRef: 'pi_term',
+      status: PaymentStatus.PAID,
+      paidAt: new Date(),
+      amount: 18.5,
+      tipAmount: 0,
+    };
+    const paymentUpdate = jest.fn().mockResolvedValue(paid);
+    const prisma = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay-term',
+          orderId: 'ord-1',
+          method: PaymentMethod.CARD,
+          provider: 'stripe',
+          providerRef: 'pi_term',
+          status: PaymentStatus.PENDING,
+          amount: 18.5,
+          tipAmount: 0,
+          order: {
+            id: 'ord-1',
+            branchId: 'br-1',
+            restaurantId: 'r-1',
+            status: OrderStatus.NEW,
+            mode: 'WALK_IN',
+            tableId: null,
+            total: 18.5,
+            payments: [
+              {
+                id: 'pay-term',
+                status: PaymentStatus.PENDING,
+                amount: 18.5,
+                tipAmount: 0,
+              },
+            ],
+            restaurant: { currency: 'EUR' },
+          },
+        }),
+      },
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          payment: { update: paymentUpdate },
+          order: {
+            update: jest.fn().mockResolvedValue({}),
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'ord-1',
+              status: OrderStatus.NEW,
+              table: null,
+              items: [],
+              restaurant: { currency: 'EUR' },
+            }),
+          },
+          table: { update: jest.fn() },
+        }),
+      ),
+      order: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ord-1',
+          status: OrderStatus.NEW,
+          mode: 'WALK_IN',
+          table: null,
+          items: [],
+          restaurant: { currency: 'EUR' },
+          restaurantId: 'r-1',
+          branchId: 'br-1',
+        }),
+      },
+    };
+
+    const service = buildService(prisma);
+    const result = await service.confirmTerminalPayment('pay-term', user);
+    expect(result.status).toBe(PaymentStatus.PAID);
+    expect(paymentProvider.retrievePaymentIntentStatus).toHaveBeenCalledWith(
+      'pi_term',
+    );
   });
 });

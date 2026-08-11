@@ -7,7 +7,8 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 
 /**
- * Walk-in: place → PENDING_PAYMENT → prepay → kitchen → pickup board → COMPLETED.
+ * Walk-in: place → PENDING_PAYMENT → prepay → kitchen → pickup READY →
+ * waiter Picked up → COMPLETED.
  */
 describe('Walk-in pickup board (e2e)', () => {
   let app: INestApplication<App>;
@@ -16,6 +17,7 @@ describe('Walk-in pickup board (e2e)', () => {
   let walkInToken: string;
   let kitchenDeviceToken: string;
   let pickupDeviceToken: string;
+  let waiterDeviceToken: string;
 
   beforeAll(async () => {
     process.env.THROTTLE_LIMIT = '10000';
@@ -78,6 +80,17 @@ describe('Walk-in pickup board (e2e)', () => {
       });
     expect([200, 201]).toContain(pickupDevice.status);
     pickupDeviceToken = pickupDevice.body.token;
+
+    const waiterDevice = await request(app.getHttpServer())
+      .post('/api/devices')
+      .set('Authorization', `Bearer ${jwt}`)
+      .send({
+        name: `E2E Walk-in Waiter ${Date.now()}`,
+        deviceType: 'WAITER',
+        branchId,
+      });
+    expect([200, 201]).toContain(waiterDevice.status);
+    waiterDeviceToken = waiterDevice.body.token;
   }, 60_000);
 
   afterAll(async () => {
@@ -128,7 +141,7 @@ describe('Walk-in pickup board (e2e)', () => {
 
     const pay = await request(app.getHttpServer())
       .post(`/api/customer/walk-in/${walkInToken}/orders/${orderId}/pay`)
-      .send({ method: 'CARD' });
+      .send({ method: 'CARD_MANUAL' });
     expect([200, 201]).toContain(pay.status);
     expect(pay.body.order.status).toBe('NEW');
 
@@ -179,10 +192,32 @@ describe('Walk-in pickup board (e2e)', () => {
         .expect(200);
     }
 
+    const readyOrder = await request(app.getHttpServer())
+      .get(`/api/customer/walk-in/${walkInToken}/orders/${orderId}`)
+      .expect(200);
+    // Stay READY until staff confirms collection (pickup TV keeps the number).
+    expect(readyOrder.body.status).toBe('READY');
+
+    board = await request(app.getHttpServer())
+      .get(`/api/customer/walk-in/${walkInToken}/pickup-board`)
+      .set('x-device-token', pickupDeviceToken)
+      .expect(200);
+    expect(
+      board.body.ready.some(
+        (e: { orderId: string; queueNumber: number }) =>
+          e.orderId === orderId && e.queueNumber === queueNumber,
+      ),
+    ).toBe(true);
+
+    await request(app.getHttpServer())
+      .patch(`/api/waiter/orders/${orderId}/status`)
+      .set('x-device-token', waiterDeviceToken)
+      .send({ status: 'COMPLETED' })
+      .expect(200);
+
     const finalOrder = await request(app.getHttpServer())
       .get(`/api/customer/walk-in/${walkInToken}/orders/${orderId}`)
       .expect(200);
-    // Already prepaid — READY walk-in auto-completes.
     expect(finalOrder.body.status).toBe('COMPLETED');
 
     board = await request(app.getHttpServer())

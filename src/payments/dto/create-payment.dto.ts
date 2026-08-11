@@ -1,7 +1,6 @@
 import {
   ArrayUnique,
   IsArray,
-  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
@@ -9,15 +8,20 @@ import {
   IsUUID,
   Min,
 } from 'class-validator';
-import { PaymentStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreatePaymentDto {
   @IsUUID()
   orderId: string;
 
-  @IsIn(['CASH', 'CARD', 'ONLINE'])
-  method: 'CASH' | 'CARD' | 'ONLINE';
+  /**
+   * CASH — till cash (PAID).
+   * CARD — Stripe Terminal only (PENDING → webhook).
+   * CARD_MANUAL — explicit honor-system card (PAID).
+   * ONLINE — Checkout (PENDING → webhook).
+   */
+  @IsIn(['CASH', 'CARD', 'CARD_MANUAL', 'ONLINE'])
+  method: 'CASH' | 'CARD' | 'CARD_MANUAL' | 'ONLINE';
 
   /** Optional tip (>= 0). Charged total = cover + tip. */
   @IsOptional()
@@ -51,8 +55,36 @@ export class CreatePaymentDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   seatNumbers?: number[];
+}
+
+/** Explicit till operation: record unpaid CASH (settle later via markPaid). */
+export class CreatePendingCashDto {
+  @IsUUID()
+  orderId: string;
 
   @IsOptional()
-  @IsEnum(PaymentStatus)
-  status?: PaymentStatus;
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tipAmount?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amount?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  orderItemIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  seatNumbers?: number[];
 }

@@ -123,6 +123,7 @@ export class MenuService {
         price: dto.price,
         imageUrl: dto.imageUrl,
         active: dto.active ?? true,
+        available: dto.available ?? true,
       },
     });
   }
@@ -179,6 +180,20 @@ export class MenuService {
     return this.prisma.menuItem.update({
       where: { id },
       data: dto,
+    });
+  }
+
+  async setItemAvailability(
+    id: string,
+    user: JwtPayload,
+    available: boolean,
+  ) {
+    await this.findItem(id, user);
+
+    return this.prisma.menuItem.update({
+      where: { id },
+      data: { available },
+      include: { category: true },
     });
   }
 

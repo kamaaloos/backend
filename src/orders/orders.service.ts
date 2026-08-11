@@ -18,6 +18,12 @@ import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { nextQueueNumber } from './queue-number.util';
+import {
+  paymentSloSeconds,
+  prepSloSeconds,
+  recordPrepDurationMs,
+} from '../telemetry/metrics';
+import { evaluateSlo, summarizeDurations } from '../telemetry/slo';
 import { withSpan } from '../telemetry/tracing';
 import { balanceDue, isOrderFullyPaid } from '../payments/payment-balance';
 import { firstCoursePresent, nextCourseToFire } from './course.util';
@@ -52,7 +58,7 @@ const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.NEW]: [OrderStatus.ACCEPTED, OrderStatus.CANCELLED],
   [OrderStatus.ACCEPTED]: [OrderStatus.PREPARING, OrderStatus.CANCELLED],
   [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
-  // Walk-in skips SERVED (pickup → COMPLETED); dine-in still uses SERVED.
+  // Walk-in: READY until staff marks Picked up (→ COMPLETED). Dine-in uses SERVED.
   [OrderStatus.READY]: [
     OrderStatus.SERVED,
     OrderStatus.COMPLETED,
@@ -108,12 +114,21 @@ export type KitchenDashboardStats = {
   /** Average age of open tickets (minutes). */
   averageWaitMinutes: number;
   /**
-   * Average age of tickets currently PREPARING (minutes).
    * Avg minutes from preparingAt → readyAt over recent READY/COMPLETED tickets.
    */
   averagePrepTimeMinutes: number | null;
   /** Oldest open ticket age (minutes). */
   longestWaitingMinutes: number;
+  /** Prep p95 seconds (4h lookback). */
+  prepP95Seconds: number | null;
+  /** Payment settle p95 seconds createdAt→paidAt (4h lookback). */
+  paymentSettleP95Seconds: number | null;
+  /** Avg payment settle seconds (4h lookback). */
+  averagePaymentSettleSeconds: number | null;
+  prepSlo: 'ok' | 'breach' | 'insufficient_data';
+  paymentSlo: 'ok' | 'breach' | 'insufficient_data';
+  sloPrepThresholdSeconds: number;
+  sloPaymentThresholdSeconds: number;
 };
 
 function withCurrency(order: OrderWithRelations): OrderResponse {
@@ -154,6 +169,45 @@ export class OrdersService {
   ) {}
 
   async create(user: JwtPayload, dto: CreateOrderDto): Promise<OrderResponse> {
+    const mode = dto.mode ?? OrderMode.DINE_IN;
+
+    if (mode === OrderMode.WALK_IN) {
+      if (dto.tableId) {
+        throw new BadRequestException(
+          'Walk-in orders cannot be attached to a table',
+        );
+      }
+
+      const branchId = await this.authorization.resolveBranch(
+        user,
+        dto.branchId,
+      );
+      await this.authorization.canAccessBranch(user, branchId);
+
+      const branch = await this.prisma.branch.findUnique({
+        where: { id: branchId },
+      });
+      if (!branch) {
+        throw new NotFoundException('Branch not found');
+      }
+
+      const restaurantId = user.restaurantId ?? branch.restaurantId;
+      if (!restaurantId) {
+        throw new BadRequestException(
+          'restaurantId could not be resolved for this walk-in order',
+        );
+      }
+
+      return this.createOrderRecord({
+        restaurantId,
+        branchId,
+        customerName: dto.customerName ?? 'Guest',
+        createdById: user.sub,
+        items: dto.items,
+        mode: OrderMode.WALK_IN,
+      });
+    }
+
     const table = await this.loadTable(dto.tableId);
 
     if (table) {
@@ -164,6 +218,7 @@ export class OrdersService {
     const branchId =
       user.branchId ??
       (dto.tableId ? table?.branchId : undefined) ??
+      dto.branchId ??
       undefined;
 
     if (!restaurantId || !branchId) {
@@ -172,6 +227,8 @@ export class OrdersService {
       );
     }
 
+    await this.authorization.canAccessBranch(user, branchId);
+
     return this.createOrderRecord({
       restaurantId,
       branchId,
@@ -179,6 +236,7 @@ export class OrdersService {
       customerName: dto.customerName,
       createdById: user.sub,
       items: dto.items,
+      mode: OrderMode.DINE_IN,
     });
   }
 
@@ -218,7 +276,14 @@ export class OrdersService {
           now,
         );
       })
-      .filter((ticket): ticket is KitchenTicketResponse => ticket != null);
+      .filter((ticket): ticket is KitchenTicketResponse => ticket != null)
+      .sort((a, b) => {
+        const rank = (t: KitchenTicketResponse) =>
+          (t.isRush ? 2 : 0) + (t.isVip ? 1 : 0);
+        const diff = rank(b) - rank(a);
+        if (diff !== 0) return diff;
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      });
   }
 
   async getKitchenDashboard(
@@ -280,17 +345,42 @@ export class OrdersService {
       take: 200,
     });
 
-    const prepMinutes = prepSamples
+    const prepSeconds = prepSamples
       .map((row) => {
         if (!row.preparingAt || !row.readyAt) return null;
         return Math.max(
           0,
-          Math.floor(
-            (row.readyAt.getTime() - row.preparingAt.getTime()) / 60_000,
-          ),
+          (row.readyAt.getTime() - row.preparingAt.getTime()) / 1000,
         );
       })
       .filter((v): v is number => v != null);
+
+    const prepMinutes = prepSeconds.map((s) => Math.floor(s / 60));
+    const prepSummary = summarizeDurations(prepSeconds);
+
+    const paySamples = await this.prisma.payment.findMany({
+      where: {
+        order: { branchId },
+        status: PaymentStatus.PAID,
+        paidAt: { not: null, gte: lookback },
+      },
+      select: { createdAt: true, paidAt: true },
+      take: 200,
+    });
+
+    const paySeconds = paySamples
+      .map((row) => {
+        if (!row.paidAt) return null;
+        return Math.max(
+          0,
+          (row.paidAt.getTime() - row.createdAt.getTime()) / 1000,
+        );
+      })
+      .filter((v): v is number => v != null);
+    const paySummary = summarizeDurations(paySeconds);
+
+    const prepThreshold = prepSloSeconds();
+    const payThreshold = paymentSloSeconds();
 
     return {
       new: count(OrderStatus.NEW),
@@ -303,6 +393,13 @@ export class OrdersService {
         prepMinutes.length === 0 ? null : average(prepMinutes),
       longestWaitingMinutes:
         agesMinutes.length === 0 ? 0 : Math.max(...agesMinutes),
+      prepP95Seconds: prepSummary.p95Seconds,
+      paymentSettleP95Seconds: paySummary.p95Seconds,
+      averagePaymentSettleSeconds: paySummary.averageSeconds,
+      prepSlo: evaluateSlo(prepSummary.p95Seconds, prepThreshold),
+      paymentSlo: evaluateSlo(paySummary.p95Seconds, payThreshold),
+      sloPrepThresholdSeconds: prepThreshold,
+      sloPaymentThresholdSeconds: payThreshold,
     };
   }
 
@@ -317,6 +414,89 @@ export class OrdersService {
     );
 
     return this.findWaiterOrdersForBranch(branchId, status);
+  }
+
+  /**
+   * Cashier floor: active tickets plus unpaid COMPLETED (recovery if someone
+   * closed a check without settling).
+   */
+  async findForCashier(
+    user: JwtPayload,
+    branchIdQuery?: string,
+  ): Promise<OrderResponse[]> {
+    const branchId = await this.authorization.resolveBranch(
+      user,
+      branchIdQuery,
+    );
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        branchId,
+        status: {
+          in: [...WAITER_ACTIVE_STATUSES, OrderStatus.COMPLETED],
+        },
+      },
+      include: orderInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return orders
+      .map(withCurrency)
+      .filter(
+        (order) =>
+          order.status !== OrderStatus.COMPLETED || order.balanceDue > 0.001,
+      );
+  }
+
+  /**
+   * Closed checks paid in [from, to) — till history for the cashier day.
+   * Defaults to the last 24h UTC if range omitted.
+   */
+  async findTodayPaidForCashier(
+    user: JwtPayload,
+    branchIdQuery?: string,
+    fromIso?: string,
+    toIso?: string,
+  ): Promise<OrderResponse[]> {
+    const branchId = await this.authorization.resolveBranch(
+      user,
+      branchIdQuery,
+    );
+
+    const now = new Date();
+    const from = fromIso ? new Date(fromIso) : new Date(now.getTime() - 86_400_000);
+    const to = toIso ? new Date(toIso) : now;
+
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Invalid from/to datetime');
+    }
+    if (from >= to) {
+      throw new BadRequestException('from must be before to');
+    }
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        branchId,
+        status: OrderStatus.COMPLETED,
+        payments: {
+          some: {
+            status: {
+              in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED],
+            },
+            paidAt: { gte: from, lt: to },
+          },
+        },
+      },
+      include: orderInclude,
+      orderBy: { updatedAt: 'desc' },
+      take: 200,
+    });
+
+    return orders
+      .map(withCurrency)
+      .filter((order) =>
+        isOrderFullyPaid(Number(order.total), order.payments),
+      );
   }
 
   /** Device-authenticated waiter display (no user JWT). */
@@ -409,6 +589,20 @@ export class OrdersService {
           );
         }
 
+        // Dine-in (and walk-in) must be settled before leaving the floor.
+        // Otherwise cashier loses the ticket once COMPLETED drops off active boards.
+        if (status === OrderStatus.COMPLETED) {
+          const paid = isOrderFullyPaid(
+            Number(order.total),
+            order.payments,
+          );
+          if (!paid) {
+            throw new BadRequestException(
+              'Cannot complete order until it is fully paid',
+            );
+          }
+        }
+
         const stamp =
           status === OrderStatus.ACCEPTED && !order.acceptedAt
             ? { acceptedAt: new Date() }
@@ -440,24 +634,19 @@ export class OrdersService {
           order.preparingAt &&
           updated.readyAt
         ) {
-          span.setAttribute(
-            'order.prep_duration_ms',
-            updated.readyAt.getTime() - order.preparingAt.getTime(),
-          );
+          const prepMs =
+            updated.readyAt.getTime() - order.preparingAt.getTime();
+          span.setAttribute('order.prep_duration_ms', prepMs);
+          recordPrepDurationMs(prepMs);
         }
 
-        // Early payment should not skip kitchen flow, but once fulfillable + paid,
-        // finish the order so it does not sit forever.
+        // Dine-in: once served + paid, close the check so it does not sit forever.
+        // Walk-in stays READY on the pickup TV until staff marks Picked up (COMPLETED).
         const paid = isOrderFullyPaid(
           Number(updated.total),
           updated.payments,
         );
-        if (
-          paid &&
-          (status === OrderStatus.SERVED ||
-            (status === OrderStatus.READY &&
-              updated.mode === OrderMode.WALK_IN))
-        ) {
+        if (paid && status === OrderStatus.SERVED) {
           return this.applyStatusTransition(updated, OrderStatus.COMPLETED);
         }
 
@@ -489,6 +678,7 @@ export class OrdersService {
       where: {
         id: { in: input.items.map((item) => item.menuItemId) },
         active: true,
+        available: true,
         restaurantId: input.restaurantId,
       },
     });
@@ -499,6 +689,7 @@ export class OrdersService {
       );
     }
 
+    const isWalkIn = mode === OrderMode.WALK_IN;
     let total = 0;
     const drafted = input.items.map((item) => {
       const menuItem = menuItems.find((m) => m.id === item.menuItemId)!;
@@ -511,7 +702,8 @@ export class OrdersService {
         notes: item.notes,
         seatNumber: item.seatNumber ?? null,
         course: item.course ?? Course.MAIN,
-        status: OrderStatus.NEW,
+        // Walk-in waits for till payment before kitchen release.
+        status: isWalkIn ? OrderStatus.PENDING_PAYMENT : OrderStatus.NEW,
       };
     });
 
@@ -520,16 +712,18 @@ export class OrdersService {
     const orderItems = drafted.map((item) => ({
       ...item,
       // Dine-in: fire first course immediately; later courses wait for fire-next.
-      // Walk-in staff create: fire everything (queue ticket).
-      firedAt:
-        mode === OrderMode.WALK_IN || item.course === firstCourse ? now : null,
+      // Walk-in: fire all courses when payment releases the ticket.
+      firedAt: isWalkIn
+        ? null
+        : item.course === firstCourse
+          ? now
+          : null,
     }));
 
     const order = await this.prisma.$transaction(async (tx) => {
-      const queueNumber =
-        mode === OrderMode.WALK_IN
-          ? await nextQueueNumber(tx, input.branchId)
-          : null;
+      const queueNumber = isWalkIn
+        ? await nextQueueNumber(tx, input.branchId)
+        : null;
 
       return tx.order.create({
         data: {
@@ -541,7 +735,7 @@ export class OrdersService {
           customerName: input.customerName,
           createdById: input.createdById,
           total,
-          status: OrderStatus.NEW,
+          status: isWalkIn ? OrderStatus.PENDING_PAYMENT : OrderStatus.NEW,
           items: { create: orderItems },
         },
         include: orderInclude,

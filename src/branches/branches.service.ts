@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -64,9 +64,14 @@ export class BranchesService {
       });
     }
 
+    // RESTAURANT_OWNER (and any other restaurant-scoped role)
+    if (!user.restaurantId) {
+      throw new ForbiddenException('User is not assigned to a restaurant.');
+    }
+
     return this.prisma.branch.findMany({
       where: {
-        restaurantId: user.restaurantId!,
+        restaurantId: user.restaurantId,
       },
     });
   }

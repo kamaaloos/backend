@@ -25,12 +25,18 @@ export function coverAmount(payment: PaymentCoverSlice): number {
   return Number(Math.max(0, amount - tip).toFixed(2));
 }
 
-/** Settled cover after refunds (refunds apply to cover before tip). */
+/**
+ * Settled cover after refunds.
+ * Refunds apply tip-first, then to order cover:
+ * food €50 + tip €10, refund €10 → cover stays €50.
+ */
 export function effectiveCover(payment: PaymentCoverSlice): number {
   if (!SETTLED_COVER_STATUSES.has(payment.status)) return 0;
-  const cover = coverAmount(payment);
+  const tip = Number(payment.tipAmount ?? 0);
   const refunded = Number(payment.refundedAmount ?? 0);
-  return Number(Math.max(0, cover - refunded).toFixed(2));
+  const cover = coverAmount(payment);
+  const coverRefunded = Math.max(0, refunded - tip);
+  return Number(Math.max(0, cover - coverRefunded).toFixed(2));
 }
 
 /** Cover reserved by PENDING + still-effective settled payments. */

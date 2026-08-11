@@ -1,10 +1,26 @@
 import { Prisma } from '@prisma/client';
 
+/** Walk-in pickup code prefix: W0012 + 2-digit daily queue (guest 1 → W001201). */
+export const WALK_IN_QUEUE_PREFIX = 'W0012';
+
 /** Start of the current UTC day — queue numbers reset daily per branch. */
 export function queueDayStart(now = new Date()): Date {
   return new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
   );
+}
+
+/**
+ * Human-facing walk-in code from the daily sequence (stored as Int).
+ * Guest 1 → W001201, guest 12 → W001212.
+ */
+export function formatWalkInQueueCode(
+  queueNumber: number | null | undefined,
+): string | null {
+  if (queueNumber == null || !Number.isFinite(queueNumber) || queueNumber < 1) {
+    return null;
+  }
+  return `${WALK_IN_QUEUE_PREFIX}${String(Math.trunc(queueNumber)).padStart(2, '0')}`;
 }
 
 /**
