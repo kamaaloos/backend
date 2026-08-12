@@ -146,6 +146,7 @@ export class CustomerController {
     return this.customerService.getOrder(token, orderId);
   }
 
+<<<<<<< HEAD
   /** Guest cancel before kitchen accepts the ticket. */
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('customer/:token/orders/:orderId/cancel')
@@ -156,6 +157,8 @@ export class CustomerController {
     return this.customerService.cancelTableOrder(token, orderId);
   }
 
+=======
+>>>>>>> Add device pairing, payment channels, and telemetry
   /** Public: open service requests for this table (pending / acknowledged). */
   @Get('customer/:token/service-requests')
   listOpenServiceRequests(@Param('token') token: string) {
