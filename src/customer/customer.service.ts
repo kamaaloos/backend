@@ -336,7 +336,6 @@ export class CustomerService {
   async cancelWalkInOrder(walkInToken: string, orderId: string) {
     const branch = await this.resolveWalkInBranch(walkInToken);
     return this.cancelCustomerOrder({
-      orderId,
       where: {
         id: orderId,
         branchId: branch.id,
@@ -348,7 +347,6 @@ export class CustomerService {
   async cancelTableOrder(token: string, orderId: string) {
     const table = await this.resolveTable(token);
     return this.cancelCustomerOrder({
-      orderId,
       where: {
         id: orderId,
         tableId: table.id,
