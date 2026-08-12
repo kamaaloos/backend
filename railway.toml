@@ -1,0 +1,11 @@
+# Railway service — set Root Directory to `backend` in the Railway dashboard.
+# Docs: docs/deploy-vercel-railway.md
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npx prisma migrate deploy && npm run start:prod"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
