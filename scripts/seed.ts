@@ -242,7 +242,7 @@ async function main() {
     for (const demo of demos) {
       await prisma.menuItem.updateMany({
         where: {
-          name: demo.name,
+          name: { equals: demo.name, mode: 'insensitive' },
           OR: [{ imageUrl: null }, { imageUrl: '' }],
         },
         data: { imageUrl: demo.imageUrl },
