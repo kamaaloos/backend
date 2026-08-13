@@ -6,3 +6,7 @@ NPM_CONFIG_PRODUCTION = "false"
 
 [phases.install]
 cmds = ["npm install --include=dev"]
+
+[phases.build]
+dependsOn = ["install"]
+cmds = ["npm run build"]
