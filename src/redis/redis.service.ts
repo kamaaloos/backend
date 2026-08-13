@@ -19,9 +19,14 @@ export class RedisService implements OnModuleDestroy {
         : '');
 
     if (!connection) {
-      if (isProd) {
+      const allowInMemory =
+        !isProd ||
+        this.config.get('REDIS_OPTIONAL') === '1' ||
+        this.config.get('REDIS_OPTIONAL') === 'true';
+
+      if (!allowInMemory) {
         throw new Error(
-          'REDIS_URL (or REDIS_HOST) is required in production — refusing in-memory fallback',
+          'REDIS_URL (or REDIS_HOST) is required in production — set REDIS_OPTIONAL=1 for single-replica in-memory fallback',
         );
       }
       this.logger.warn(
