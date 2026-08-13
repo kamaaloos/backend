@@ -1,0 +1,8 @@
+# Railway/Nixpacks: Nest needs @nestjs/cli + typescript from devDependencies to build.
+# Default production installs omit those and fail with `nest: not found`.
+
+[variables]
+NPM_CONFIG_PRODUCTION = "false"
+
+[phases.install]
+cmds = ["npm install --include=dev"]
