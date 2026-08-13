@@ -603,6 +603,19 @@ export class OrdersService {
           }
         }
 
+        if (status === OrderStatus.CANCELLED) {
+          const settled = order.payments.some(
+            (p) =>
+              p.status === PaymentStatus.PAID ||
+              p.status === PaymentStatus.PARTIALLY_REFUNDED,
+          );
+          if (settled) {
+            throw new BadRequestException(
+              'Paid orders cannot be cancelled. Refund the payment instead.',
+            );
+          }
+        }
+
         const stamp =
           status === OrderStatus.ACCEPTED && !order.acceptedAt
             ? { acceptedAt: new Date() }
@@ -614,19 +627,31 @@ export class OrdersService {
                   ? { servedAt: new Date() }
                   : {};
 
-        const updated = await this.prisma.order.update({
-          where: { id: order.id },
-          data: {
-            status,
-            ...stamp,
-            items: {
-              updateMany: {
-                where: { orderId: order.id },
-                data: { status },
+        const updated = await this.prisma.$transaction(async (tx) => {
+          if (status === OrderStatus.CANCELLED) {
+            await tx.payment.updateMany({
+              where: {
+                orderId: order.id,
+                status: PaymentStatus.PENDING,
+              },
+              data: { status: PaymentStatus.VOIDED },
+            });
+          }
+
+          return tx.order.update({
+            where: { id: order.id },
+            data: {
+              status,
+              ...stamp,
+              items: {
+                updateMany: {
+                  where: { orderId: order.id },
+                  data: { status },
+                },
               },
             },
-          },
-          include: orderInclude,
+            include: orderInclude,
+          });
         });
 
         if (
