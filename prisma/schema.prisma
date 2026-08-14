@@ -26,6 +26,11 @@ model Restaurant {
 
   logoUrl String?
 
+  /** Customer UI brand pack — null = platform defaults. */
+  brandAccent String?
+  brandButton String?
+  brandPaper  String?
+
   active Boolean @default(true)
 
   createdAt DateTime @default(now())

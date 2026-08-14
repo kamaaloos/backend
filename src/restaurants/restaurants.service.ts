@@ -13,6 +13,13 @@ import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { AuthorizationService } from '../common/authorization/authorization.service';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
+function emptyToNull(value?: string | null): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
 @Injectable()
 export class RestaurantsService {
   constructor(
@@ -42,6 +49,10 @@ export class RestaurantsService {
         email: dto.email,
         phone: dto.phone,
         address: dto.address,
+        logoUrl: emptyToNull(dto.logoUrl),
+        brandAccent: emptyToNull(dto.brandAccent),
+        brandButton: emptyToNull(dto.brandButton),
+        brandPaper: emptyToNull(dto.brandPaper),
       },
     });
   }
@@ -79,7 +90,16 @@ export class RestaurantsService {
   async update(id: string, dto: UpdateRestaurantDto, user: JwtPayload) {
     await this.findOne(id, user);
 
-    const data: UpdateRestaurantDto & { slug?: string } = { ...dto };
+    const data: UpdateRestaurantDto & { slug?: string } = {
+      ...dto,
+      logoUrl: dto.logoUrl !== undefined ? emptyToNull(dto.logoUrl) : undefined,
+      brandAccent:
+        dto.brandAccent !== undefined ? emptyToNull(dto.brandAccent) : undefined,
+      brandButton:
+        dto.brandButton !== undefined ? emptyToNull(dto.brandButton) : undefined,
+      brandPaper:
+        dto.brandPaper !== undefined ? emptyToNull(dto.brandPaper) : undefined,
+    };
 
     if (dto.name) {
       const slug = slugify(dto.name, {

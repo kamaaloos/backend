@@ -98,6 +98,9 @@ export class CustomerService {
         name: table.branch.restaurant.name,
         logoUrl: table.branch.restaurant.logoUrl,
         currency: table.branch.restaurant.currency,
+        brandAccent: table.branch.restaurant.brandAccent,
+        brandButton: table.branch.restaurant.brandButton,
+        brandPaper: table.branch.restaurant.brandPaper,
       },
       branch: {
         id: table.branch.id,
@@ -129,6 +132,9 @@ export class CustomerService {
         name: branch.restaurant.name,
         logoUrl: branch.restaurant.logoUrl,
         currency: branch.restaurant.currency,
+        brandAccent: branch.restaurant.brandAccent,
+        brandButton: branch.restaurant.brandButton,
+        brandPaper: branch.restaurant.brandPaper,
       },
       branch: {
         id: branch.id,
@@ -406,6 +412,10 @@ export class CustomerService {
       restaurant: {
         id: branch.restaurant.id,
         name: branch.restaurant.name,
+        logoUrl: branch.restaurant.logoUrl,
+        brandAccent: branch.restaurant.brandAccent,
+        brandButton: branch.restaurant.brandButton,
+        brandPaper: branch.restaurant.brandPaper,
       },
       preparing,
       ready,
