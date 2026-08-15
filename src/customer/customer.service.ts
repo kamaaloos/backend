@@ -152,21 +152,8 @@ export class CustomerService {
   }
 
   async listWalkInBranches() {
-    const branches = await this.prisma.branch.findMany({
-      where: { active: true, restaurant: { active: true } },
-      select: {
-        walkInToken: true,
-        name: true,
-        restaurant: { select: { id: true, name: true } },
-      },
-      orderBy: [{ restaurant: { name: 'asc' } }, { name: 'asc' }],
-    });
-
-    return branches.map((b) => ({
-      walkInToken: b.walkInToken,
-      name: b.name,
-      restaurant: b.restaurant,
-    }));
+    // Public directory disabled — guests use QR / direct /w and /t links only.
+    return [];
   }
 
   async getMenuItem(token: string, menuItemId: string) {

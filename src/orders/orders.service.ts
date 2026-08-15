@@ -78,7 +78,17 @@ const orderInclude = {
   },
   table: true,
   payments: {
-    include: { lines: true },
+    include: {
+      lines: true,
+      receivedBy: {
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
     orderBy: { createdAt: 'asc' as const },
   },
   restaurant: {

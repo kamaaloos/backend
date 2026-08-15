@@ -44,10 +44,18 @@ function observePaymentSettle(
   span?.setAttribute('payment.settle_duration_ms', ms);
   recordPaymentSettleDurationMs(ms);
 }
+type PaymentReceivedBy = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+};
+
 type PaymentResponse = Payment & {
   currency: string;
   checkoutUrl?: string;
   clientSecret?: string;
+  receivedBy?: PaymentReceivedBy | null;
 };
 
 const ACTIVE_ORDER_STATUSES: OrderStatus[] = [
@@ -226,6 +234,7 @@ export class PaymentsService {
           channel,
           status,
           paidAt,
+          receivedByUserId: user.sub ?? user.id,
           provider:
             isOnline || isTerminalCard
               ? this.paymentProvider.getProviderId()
@@ -238,6 +247,16 @@ export class PaymentsService {
               })),
             }
             : undefined,
+        },
+        include: {
+          receivedBy: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
         },
       });
 
@@ -567,7 +586,19 @@ export class PaymentsService {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
-        payments: { orderBy: { createdAt: 'asc' } },
+        payments: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            receivedBy: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
         restaurant: { select: { currency: true } },
       },
     });
@@ -631,7 +662,9 @@ export class PaymentsService {
       );
     }
 
-    return this.settlePendingPayment(payment);
+    return this.settlePendingPayment(payment, {
+      receivedByUserId: user.sub ?? user.id,
+    });
   }
 
   /**
@@ -685,7 +718,9 @@ export class PaymentsService {
       );
     }
 
-    return this.settlePendingPayment(payment);
+    return this.settlePendingPayment(payment, {
+      receivedByUserId: user.sub ?? user.id,
+    });
   }
 
   createTerminalConnectionToken() {
@@ -789,6 +824,7 @@ export class PaymentsService {
         restaurant: { currency: string };
       };
     },
+    opts?: { receivedByUserId?: string },
   ): Promise<PaymentResponse> {
     const currency = payment.order.restaurant.currency;
 
@@ -813,6 +849,19 @@ export class PaymentsService {
         data: {
           status: PaymentStatus.PAID,
           paidAt: new Date(),
+          ...(opts?.receivedByUserId
+            ? { receivedByUserId: opts.receivedByUserId }
+            : {}),
+        },
+        include: {
+          receivedBy: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
         },
       });
 

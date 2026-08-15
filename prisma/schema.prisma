@@ -270,6 +270,10 @@ model Payment {
   paidAt     DateTime?
   refundedAt DateTime?
 
+  /** Staff user who took / settled the payment at the till (null for guest ONLINE). */
+  receivedByUserId String?
+  receivedBy       User?   @relation("PaymentsReceived", fields: [receivedByUserId], references: [id], onDelete: SetNull)
+
   lines PaymentLine[]
 
   createdAt DateTime @default(now())
@@ -278,6 +282,7 @@ model Payment {
   @@index([orderId])
   @@index([status])
   @@index([channel])
+  @@index([receivedByUserId])
 }
 
 /** Dedupes Stripe webhook deliveries (evt_…). */
@@ -443,6 +448,7 @@ model User {
   active       Boolean @default(true)
 
   createdOrders Order[] @relation("CreatedOrders")
+  receivedPayments Payment[] @relation("PaymentsReceived")
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
