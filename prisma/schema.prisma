@@ -32,6 +32,8 @@ model Restaurant {
   brandPaper  String?
   /** Menu backdrop: customer public path (/images/…) or uploaded https URL. */
   brandBackgroundUrl String?
+  /** Ordered cinematic reel (preferred). Empty = use defaults or brandBackgroundUrl. */
+  brandBackgroundUrls String[] @default([])
 
   active Boolean @default(true)
 

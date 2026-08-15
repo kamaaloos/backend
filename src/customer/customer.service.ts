@@ -22,6 +22,18 @@ import { nextQueueNumber } from '../orders/queue-number.util';
 import { firstCoursePresent } from '../orders/course.util';
 import { balanceDue } from '../payments/payment-balance';
 
+function resolveBrandBackgrounds(restaurant: {
+  brandBackgroundUrl?: string | null;
+  brandBackgroundUrls?: string[] | null;
+}): string[] {
+  const fromGallery = (restaurant.brandBackgroundUrls ?? [])
+    .map((u) => u?.trim())
+    .filter((u): u is string => !!u);
+  if (fromGallery.length) return fromGallery;
+  const single = restaurant.brandBackgroundUrl?.trim();
+  return single ? [single] : [];
+}
+
 function withPaymentCompat<
   T extends {
     total: unknown;
@@ -102,6 +114,7 @@ export class CustomerService {
         brandButton: table.branch.restaurant.brandButton,
         brandPaper: table.branch.restaurant.brandPaper,
         brandBackgroundUrl: table.branch.restaurant.brandBackgroundUrl,
+        brandBackgroundUrls: resolveBrandBackgrounds(table.branch.restaurant),
       },
       branch: {
         id: table.branch.id,
@@ -137,6 +150,7 @@ export class CustomerService {
         brandButton: branch.restaurant.brandButton,
         brandPaper: branch.restaurant.brandPaper,
         brandBackgroundUrl: branch.restaurant.brandBackgroundUrl,
+        brandBackgroundUrls: resolveBrandBackgrounds(branch.restaurant),
       },
       branch: {
         id: branch.id,
@@ -406,6 +420,7 @@ export class CustomerService {
         brandButton: branch.restaurant.brandButton,
         brandPaper: branch.restaurant.brandPaper,
         brandBackgroundUrl: branch.restaurant.brandBackgroundUrl,
+        brandBackgroundUrls: resolveBrandBackgrounds(branch.restaurant),
       },
       preparing,
       ready,

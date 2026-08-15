@@ -20,6 +20,23 @@ function emptyToNull(value?: string | null): string | null | undefined {
   return trimmed.length ? trimmed : null;
 }
 
+function normalizeBackgroundUrls(
+  urls?: string[] | null,
+): string[] | undefined {
+  if (urls === undefined) return undefined;
+  if (urls == null) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of urls) {
+    const v = raw?.trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 @Injectable()
 export class RestaurantsService {
   constructor(
@@ -42,6 +59,12 @@ export class RestaurantsService {
       throw new ConflictException('Restaurant already exists');
     }
 
+    const backgroundUrls = normalizeBackgroundUrls(dto.brandBackgroundUrls);
+    const backgroundUrl =
+      backgroundUrls !== undefined
+        ? backgroundUrls[0] ?? null
+        : emptyToNull(dto.brandBackgroundUrl);
+
     return this.prisma.restaurant.create({
       data: {
         name: dto.name,
@@ -53,7 +76,8 @@ export class RestaurantsService {
         brandAccent: emptyToNull(dto.brandAccent),
         brandButton: emptyToNull(dto.brandButton),
         brandPaper: emptyToNull(dto.brandPaper),
-        brandBackgroundUrl: emptyToNull(dto.brandBackgroundUrl),
+        brandBackgroundUrl: backgroundUrl,
+        brandBackgroundUrls: backgroundUrls ?? [],
       },
     });
   }
@@ -91,7 +115,12 @@ export class RestaurantsService {
   async update(id: string, dto: UpdateRestaurantDto, user: JwtPayload) {
     await this.findOne(id, user);
 
-    const data: UpdateRestaurantDto & { slug?: string } = {
+    const backgroundUrls = normalizeBackgroundUrls(dto.brandBackgroundUrls);
+
+    const data: UpdateRestaurantDto & {
+      slug?: string;
+      brandBackgroundUrls?: string[];
+    } = {
       ...dto,
       logoUrl: dto.logoUrl !== undefined ? emptyToNull(dto.logoUrl) : undefined,
       brandAccent:
@@ -101,9 +130,12 @@ export class RestaurantsService {
       brandPaper:
         dto.brandPaper !== undefined ? emptyToNull(dto.brandPaper) : undefined,
       brandBackgroundUrl:
-        dto.brandBackgroundUrl !== undefined
-          ? emptyToNull(dto.brandBackgroundUrl)
-          : undefined,
+        backgroundUrls !== undefined
+          ? backgroundUrls[0] ?? null
+          : dto.brandBackgroundUrl !== undefined
+            ? emptyToNull(dto.brandBackgroundUrl)
+            : undefined,
+      brandBackgroundUrls: backgroundUrls,
     };
 
     if (dto.name) {

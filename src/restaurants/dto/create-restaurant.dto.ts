@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsEmail,
   IsOptional,
   IsString,
@@ -48,4 +49,10 @@ export class CreateRestaurantDto {
   @IsString()
   @MaxLength(1000)
   brandBackgroundUrl?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(1000, { each: true })
+  brandBackgroundUrls?: string[] | null;
 }
