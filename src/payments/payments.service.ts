@@ -311,6 +311,16 @@ export class PaymentsService {
           provider: checkout.provider,
           providerRef: checkout.providerRef,
         },
+        include: {
+          receivedBy: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
       });
       checkoutUrl = checkout.checkoutUrl;
       span.setAttribute('payment.provider', checkout.provider);
@@ -327,6 +337,16 @@ export class PaymentsService {
         data: {
           provider: intent.provider,
           providerRef: intent.providerRef,
+        },
+        include: {
+          receivedBy: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
         },
       });
       clientSecret = intent.clientSecret;
