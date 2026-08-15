@@ -43,4 +43,9 @@ export class CreateRestaurantDto {
   @ValidateIf((_, v) => v != null && v !== '')
   @Matches(HEX, { message: 'brandPaper must be a hex color like #f8f5ef' })
   brandPaper?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  brandBackgroundUrl?: string | null;
 }

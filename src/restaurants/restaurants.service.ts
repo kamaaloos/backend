@@ -53,6 +53,7 @@ export class RestaurantsService {
         brandAccent: emptyToNull(dto.brandAccent),
         brandButton: emptyToNull(dto.brandButton),
         brandPaper: emptyToNull(dto.brandPaper),
+        brandBackgroundUrl: emptyToNull(dto.brandBackgroundUrl),
       },
     });
   }
@@ -99,6 +100,10 @@ export class RestaurantsService {
         dto.brandButton !== undefined ? emptyToNull(dto.brandButton) : undefined,
       brandPaper:
         dto.brandPaper !== undefined ? emptyToNull(dto.brandPaper) : undefined,
+      brandBackgroundUrl:
+        dto.brandBackgroundUrl !== undefined
+          ? emptyToNull(dto.brandBackgroundUrl)
+          : undefined,
     };
 
     if (dto.name) {

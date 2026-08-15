@@ -24,6 +24,7 @@ import { WaiterDisplayModule } from './waiter-display/waiter-display.module';
 import { RedisModule } from './redis/redis.module';
 import { RedisService } from './redis/redis.service';
 import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
     CustomerModule,
     KitchenDisplayModule,
     WaiterDisplayModule,
+    UploadsModule,
   ],
   controllers: [AppController],
   providers: [

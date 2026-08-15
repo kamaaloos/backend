@@ -101,6 +101,7 @@ export class CustomerService {
         brandAccent: table.branch.restaurant.brandAccent,
         brandButton: table.branch.restaurant.brandButton,
         brandPaper: table.branch.restaurant.brandPaper,
+        brandBackgroundUrl: table.branch.restaurant.brandBackgroundUrl,
       },
       branch: {
         id: table.branch.id,
@@ -135,6 +136,7 @@ export class CustomerService {
         brandAccent: branch.restaurant.brandAccent,
         brandButton: branch.restaurant.brandButton,
         brandPaper: branch.restaurant.brandPaper,
+        brandBackgroundUrl: branch.restaurant.brandBackgroundUrl,
       },
       branch: {
         id: branch.id,
@@ -403,6 +405,7 @@ export class CustomerService {
         brandAccent: branch.restaurant.brandAccent,
         brandButton: branch.restaurant.brandButton,
         brandPaper: branch.restaurant.brandPaper,
+        brandBackgroundUrl: branch.restaurant.brandBackgroundUrl,
       },
       preparing,
       ready,

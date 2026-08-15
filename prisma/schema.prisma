@@ -30,6 +30,8 @@ model Restaurant {
   brandAccent String?
   brandButton String?
   brandPaper  String?
+  /** Menu backdrop: customer public path (/images/…) or uploaded https URL. */
+  brandBackgroundUrl String?
 
   active Boolean @default(true)
 
