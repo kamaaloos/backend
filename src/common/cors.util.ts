@@ -1,8 +1,7 @@
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
 /** Vercel preview/production app URLs (e.g. customer-git-main-acme.vercel.app). */
-const VERCEL_APP_ORIGIN =
-  /^https:\/\/[\w.-]+\.vercel\.app$/;
+const VERCEL_APP_ORIGIN = /^https:\/\/[\w.-]+\.vercel\.app$/;
 
 function parseOrigins(raw?: string): string[] {
   if (!raw?.trim()) return [];
@@ -16,6 +15,31 @@ function isTruthyFlag(value?: string): boolean {
   return value === '1' || value === 'true' || value === 'TRUE';
 }
 
+/** Convert https://*.maylesoft.com → regex matching any single subdomain. */
+function originPattern(entry: string): RegExp | string {
+  if (!entry.includes('*')) return entry;
+  const escaped = entry.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  const withWildcards = escaped.replace(/\*/g, '[\\w-]+');
+  return new RegExp(`^${withWildcards}$`);
+}
+
+function originAllowed(
+  origin: string,
+  explicit: string[],
+  allowVercelPreviews: boolean,
+): boolean {
+  for (const entry of explicit) {
+    const pattern = originPattern(entry);
+    if (typeof pattern === 'string') {
+      if (pattern === origin) return true;
+    } else if (pattern.test(origin)) {
+      return true;
+    }
+  }
+  if (allowVercelPreviews && VERCEL_APP_ORIGIN.test(origin)) return true;
+  return false;
+}
+
 export function buildCorsOptions(input: {
   corsOrigin?: string;
   allowVercelPreviews?: string;
@@ -23,6 +47,7 @@ export function buildCorsOptions(input: {
 }): CorsOptions {
   const explicit = parseOrigins(input.corsOrigin);
   const allowVercelPreviews = isTruthyFlag(input.allowVercelPreviews);
+  const hasWildcard = explicit.some((o) => o.includes('*'));
 
   if (input.isProd && explicit.length === 0 && !allowVercelPreviews) {
     throw new Error(
@@ -34,7 +59,7 @@ export function buildCorsOptions(input: {
     return { origin: true, credentials: true };
   }
 
-  if (!allowVercelPreviews) {
+  if (!allowVercelPreviews && !hasWildcard) {
     return { origin: explicit, credentials: true };
   }
 
@@ -45,7 +70,7 @@ export function buildCorsOptions(input: {
         callback(null, true);
         return;
       }
-      if (explicit.includes(origin) || VERCEL_APP_ORIGIN.test(origin)) {
+      if (originAllowed(origin, explicit, allowVercelPreviews)) {
         callback(null, true);
         return;
       }

@@ -9,11 +9,21 @@ import {
 } from 'class-validator';
 
 const HEX = /^#[0-9A-Fa-f]{6}$/;
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export class CreateRestaurantDto {
   @IsString()
   @MaxLength(100)
   name: string;
+
+  /** Optional public subdomain slug (e.g. alhuda → alhuda.maylesoft.com). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  @Matches(SLUG, {
+    message: 'slug must be lowercase letters, numbers, and hyphens',
+  })
+  slug?: string;
 
   @IsOptional()
   @IsString()

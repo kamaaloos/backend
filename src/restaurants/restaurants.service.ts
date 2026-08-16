@@ -45,18 +45,20 @@ export class RestaurantsService {
   ) {}
 
   async create(dto: CreateRestaurantDto) {
-    const slug = slugify(dto.name, {
-      lower: true,
-      strict: true,
-      trim: true,
-    });
+    const slug =
+      dto.slug?.trim().toLowerCase() ||
+      slugify(dto.name, {
+        lower: true,
+        strict: true,
+        trim: true,
+      });
 
     const exists = await this.prisma.restaurant.findUnique({
       where: { slug },
     });
 
     if (exists) {
-      throw new ConflictException('Restaurant already exists');
+      throw new ConflictException('Restaurant slug already in use');
     }
 
     const backgroundUrls = normalizeBackgroundUrls(dto.brandBackgroundUrls);
@@ -138,17 +140,17 @@ export class RestaurantsService {
       brandBackgroundUrls: backgroundUrls,
     };
 
-    if (dto.name) {
-      const slug = slugify(dto.name, {
-        lower: true,
-        strict: true,
-        trim: true,
-      });
+    // Explicit slug only — renaming should not break restaurant subdomains.
+    if (dto.slug !== undefined) {
+      const slug = dto.slug.trim().toLowerCase();
+      if (!slug) {
+        throw new ConflictException('Slug cannot be empty');
+      }
       const exists = await this.prisma.restaurant.findFirst({
         where: { slug, NOT: { id } },
       });
       if (exists) {
-        throw new ConflictException('Restaurant already exists');
+        throw new ConflictException('Restaurant slug already in use');
       }
       data.slug = slug;
     }

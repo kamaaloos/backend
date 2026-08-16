@@ -172,6 +172,63 @@ export class CustomerService {
     return [];
   }
 
+  /** Resolve restaurant tenant for subdomain hosts (alhuda.maylesoft.com). */
+  async getTenantBySlug(slug: string) {
+    const normalized = slug.trim().toLowerCase();
+    if (!normalized || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized)) {
+      throw new NotFoundException('Restaurant not found');
+    }
+
+    const restaurant = await this.prisma.restaurant.findFirst({
+      where: { slug: normalized, active: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logoUrl: true,
+        currency: true,
+        brandAccent: true,
+        brandButton: true,
+        brandPaper: true,
+        brandBackgroundUrl: true,
+        brandBackgroundUrls: true,
+        branches: {
+          where: { active: true },
+          select: {
+            id: true,
+            name: true,
+            walkInToken: true,
+          },
+          orderBy: { name: 'asc' },
+        },
+      },
+    });
+
+    if (!restaurant) {
+      throw new NotFoundException('Restaurant not found');
+    }
+
+    return {
+      restaurant: {
+        id: restaurant.id,
+        name: restaurant.name,
+        slug: restaurant.slug,
+        logoUrl: restaurant.logoUrl,
+        currency: restaurant.currency,
+        brandAccent: restaurant.brandAccent,
+        brandButton: restaurant.brandButton,
+        brandPaper: restaurant.brandPaper,
+        brandBackgroundUrl: restaurant.brandBackgroundUrl,
+        brandBackgroundUrls: resolveBrandBackgrounds(restaurant),
+      },
+      branches: restaurant.branches.map((b) => ({
+        id: b.id,
+        name: b.name,
+        walkInToken: b.walkInToken,
+      })),
+    };
+  }
+
   async getMenuItem(token: string, menuItemId: string) {
     const table = await this.resolveTable(token);
 

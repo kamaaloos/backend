@@ -42,4 +42,32 @@ describe('buildCorsOptions', () => {
       expect(ok).toBe(false);
     });
   });
+
+  it('allows wildcard tenant hosts in CORS_ORIGIN', () => {
+    const opts = buildCorsOptions({
+      corsOrigin:
+        'https://admin.maylesoft.com,https://*.maylesoft.com,https://maylesoft.com',
+    });
+    expect(typeof opts.origin).toBe('function');
+
+    const originFn = opts.origin as (
+      origin: string | undefined,
+      cb: (err: Error | null, ok?: boolean) => void,
+    ) => void;
+
+    originFn('https://alhuda.maylesoft.com', (err, ok) => {
+      expect(err).toBeNull();
+      expect(ok).toBe(true);
+    });
+
+    originFn('https://admin.maylesoft.com', (err, ok) => {
+      expect(err).toBeNull();
+      expect(ok).toBe(true);
+    });
+
+    originFn('https://evil.example.com', (err, ok) => {
+      expect(err).toBeInstanceOf(Error);
+      expect(ok).toBe(false);
+    });
+  });
 });

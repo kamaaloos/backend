@@ -40,6 +40,12 @@ export class CustomerController {
     return this.customerService.listWalkInBranches();
   }
 
+  /** Public tenant lookup for restaurant subdomains (e.g. alhuda.maylesoft.com). */
+  @Get('customer/tenants/:slug')
+  getTenantBySlug(@Param('slug') slug: string) {
+    return this.customerService.getTenantBySlug(slug);
+  }
+
   /** Public: ONLINE provider flag for guest pay UI. */
   @Get('customer/payments/config')
   getPaymentConfig() {
