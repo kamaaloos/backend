@@ -37,6 +37,10 @@ export class AuthService {
       branchId: user.branchId,
     };
 
+    const restaurant = user.restaurantId
+      ? await this.usersService.findRestaurantBrand(user.restaurantId)
+      : null;
+
     return {
       access_token: await this.jwtService.signAsync(payload),
       user: {
@@ -45,6 +49,7 @@ export class AuthService {
         role: user.role,
         restaurantId: user.restaurantId,
         branchId: user.branchId,
+        restaurant,
       },
     };
   }

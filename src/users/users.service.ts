@@ -146,6 +146,21 @@ export class UsersService {
     });
   }
 
+  async findRestaurantBrand(restaurantId: string) {
+    return this.prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logoUrl: true,
+        brandAccent: true,
+        brandButton: true,
+        brandPaper: true,
+      },
+    });
+  }
+
   async updateUser(
     currentUser: JwtPayload,
     id: string,
