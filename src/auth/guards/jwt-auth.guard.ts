@@ -18,8 +18,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         err ??
         new UnauthorizedException(
           info?.message === 'jwt expired'
-            ? 'Token expired — login again'
-            : 'Invalid or missing token — login and use Authorization: Bearer <access_token>',
+            ? 'Token expired — refresh the session or sign in again'
+            : 'Invalid or missing token — sign in again',
         )
       );
     }
