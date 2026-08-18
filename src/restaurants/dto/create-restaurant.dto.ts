@@ -75,4 +75,10 @@ export class CreateRestaurantDto {
   @ValidateIf((_, v) => v != null && v !== '')
   @Matches(HEX, { message: 'qrModuleColor must be a hex color like #2F6BFF' })
   qrModuleColor?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(1000, { each: true })
+  menuImageUrls?: string[] | null;
 }

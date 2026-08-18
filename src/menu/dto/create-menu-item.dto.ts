@@ -33,7 +33,7 @@ export class CreateMenuItemDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(2000)
   imageUrl?: string;
 
   @IsOptional()

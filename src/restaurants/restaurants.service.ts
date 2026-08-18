@@ -20,8 +20,9 @@ function emptyToNull(value?: string | null): string | null | undefined {
   return trimmed.length ? trimmed : null;
 }
 
-function normalizeBackgroundUrls(
+function normalizeUrlList(
   urls?: string[] | null,
+  max = 12,
 ): string[] | undefined {
   if (urls === undefined) return undefined;
   if (urls == null) return [];
@@ -32,9 +33,15 @@ function normalizeBackgroundUrls(
     if (!v || seen.has(v)) continue;
     seen.add(v);
     out.push(v);
-    if (out.length >= 12) break;
+    if (out.length >= max) break;
   }
   return out;
+}
+
+function normalizeBackgroundUrls(
+  urls?: string[] | null,
+): string[] | undefined {
+  return normalizeUrlList(urls, 12);
 }
 
 @Injectable()
@@ -82,6 +89,7 @@ export class RestaurantsService {
         brandBackgroundUrls: backgroundUrls ?? [],
         qrFrameColor: emptyToNull(dto.qrFrameColor),
         qrModuleColor: emptyToNull(dto.qrModuleColor),
+        menuImageUrls: normalizeUrlList(dto.menuImageUrls, 80) ?? [],
       },
     });
   }
@@ -120,10 +128,12 @@ export class RestaurantsService {
     await this.findOne(id, user);
 
     const backgroundUrls = normalizeBackgroundUrls(dto.brandBackgroundUrls);
+    const menuImageUrls = normalizeUrlList(dto.menuImageUrls, 80);
 
     const data: UpdateRestaurantDto & {
       slug?: string;
       brandBackgroundUrls?: string[];
+      menuImageUrls?: string[];
     } = {
       ...dto,
       logoUrl: dto.logoUrl !== undefined ? emptyToNull(dto.logoUrl) : undefined,
@@ -148,6 +158,7 @@ export class RestaurantsService {
             ? emptyToNull(dto.brandBackgroundUrl)
             : undefined,
       brandBackgroundUrls: backgroundUrls,
+      menuImageUrls,
     };
 
     // Explicit slug only — renaming should not break restaurant subdomains.

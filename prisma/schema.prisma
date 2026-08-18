@@ -40,6 +40,9 @@ model Restaurant {
   /** Printed table QR modules (e.g. #2F6BFF). */
   qrModuleColor String?
 
+  /** Restaurant-owned dish photos (https URLs). Pick per menu item. */
+  menuImageUrls String[] @default([])
+
   active Boolean @default(true)
 
   createdAt DateTime @default(now())
