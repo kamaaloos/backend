@@ -35,6 +35,11 @@ model Restaurant {
   /** Ordered cinematic reel (preferred). Empty = use defaults or brandBackgroundUrl. */
   brandBackgroundUrls String[] @default([])
 
+  /** Printed table QR card: "Scan Me" + frame + tray (e.g. #E31B23). */
+  qrFrameColor String?
+  /** Printed table QR modules (e.g. #2F6BFF). */
+  qrModuleColor String?
+
   active Boolean @default(true)
 
   createdAt DateTime @default(now())

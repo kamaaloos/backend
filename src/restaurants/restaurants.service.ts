@@ -80,6 +80,8 @@ export class RestaurantsService {
         brandPaper: emptyToNull(dto.brandPaper),
         brandBackgroundUrl: backgroundUrl,
         brandBackgroundUrls: backgroundUrls ?? [],
+        qrFrameColor: emptyToNull(dto.qrFrameColor),
+        qrModuleColor: emptyToNull(dto.qrModuleColor),
       },
     });
   }
@@ -131,6 +133,14 @@ export class RestaurantsService {
         dto.brandButton !== undefined ? emptyToNull(dto.brandButton) : undefined,
       brandPaper:
         dto.brandPaper !== undefined ? emptyToNull(dto.brandPaper) : undefined,
+      qrFrameColor:
+        dto.qrFrameColor !== undefined
+          ? emptyToNull(dto.qrFrameColor)
+          : undefined,
+      qrModuleColor:
+        dto.qrModuleColor !== undefined
+          ? emptyToNull(dto.qrModuleColor)
+          : undefined,
       brandBackgroundUrl:
         backgroundUrls !== undefined
           ? backgroundUrls[0] ?? null

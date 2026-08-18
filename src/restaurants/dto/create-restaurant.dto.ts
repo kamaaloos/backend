@@ -65,4 +65,14 @@ export class CreateRestaurantDto {
   @IsString({ each: true })
   @MaxLength(1000, { each: true })
   brandBackgroundUrls?: string[] | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @Matches(HEX, { message: 'qrFrameColor must be a hex color like #E31B23' })
+  qrFrameColor?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @Matches(HEX, { message: 'qrModuleColor must be a hex color like #2F6BFF' })
+  qrModuleColor?: string | null;
 }
