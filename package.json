@@ -1,8 +1,8 @@
 {
   "name": "backend",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "description": "MayleSoft restaurant API — NestJS service for menus, orders, payments, and realtime staff boards.",
+  "author": "Eng. Hassan Kamal",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
