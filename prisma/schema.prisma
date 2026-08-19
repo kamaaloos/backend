@@ -144,6 +144,12 @@ model Table {
   /** When set, public QR access is rejected after this timestamp. */
   qrTokenExpiresAt DateTime?
 
+  /** Bcrypt hash of the printed table order PIN. */
+  orderPinHash String?
+
+  /** Bumped on PIN rotate — invalidates daily presence cookies. */
+  orderPinVersion Int @default(0)
+
   status      TableStatus @default(AVAILABLE)
 
   notes       String?

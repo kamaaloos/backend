@@ -7,13 +7,17 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import type { Request, Response } from 'express';
 
 import { CustomerService } from './customer.service';
 import { PlaceCustomerOrderDto } from './dto/place-customer-order.dto';
+import { VerifyTablePinDto } from './dto/verify-table-pin.dto';
 import { PayWalkInOrderDto } from './dto/pay-walk-in-order.dto';
 import { CreateServiceRequestDto } from './dto/create-service-request.dto';
 import { PaymentsService } from '../payments/payments.service';
@@ -127,14 +131,41 @@ export class CustomerController {
     return this.customerService.getMenuItem(token, itemId);
   }
 
+  /** Whether this device verified the table PIN today. */
+  @Get('customer/:token/presence')
+  getTablePresence(
+    @Param('token') token: string,
+    @Req() req: Request,
+  ) {
+    return this.customerService.getTablePresence(token, req.headers.cookie);
+  }
+
+  /** Verify printed table PIN — sets daily httpOnly presence cookie. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('customer/:token/verify-pin')
+  verifyTablePin(
+    @Param('token') token: string,
+    @Body() dto: VerifyTablePinDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.customerService.verifyTablePin(token, dto.tablePin, res);
+  }
+
   /** Public: place cart as an order. */
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('customer/:token/orders')
   placeOrder(
     @Param('token') token: string,
     @Body() dto: PlaceCustomerOrderDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.customerService.placeOrder(token, dto);
+    return this.customerService.placeOrder(
+      token,
+      dto,
+      req.headers.cookie,
+      res,
+    );
   }
 
   /** Public: live order list for this table. */
@@ -174,8 +205,15 @@ export class CustomerController {
   createServiceRequest(
     @Param('token') token: string,
     @Body() dto: CreateServiceRequestDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.customerService.createServiceRequest(token, dto);
+    return this.customerService.createServiceRequest(
+      token,
+      dto,
+      req.headers.cookie,
+      res,
+    );
   }
 
   /** Staff: open service requests for branch. */

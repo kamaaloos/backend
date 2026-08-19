@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Length,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -55,6 +56,11 @@ export class PlaceCustomerOrderDto {
   @IsOptional()
   @IsBoolean()
   isVip?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Length(4, 6)
+  tablePin?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

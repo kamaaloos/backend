@@ -12,6 +12,7 @@ export const E2E_FIXTURES = {
   restaurantSlug: 'demo-restaurant',
   walkInToken: 'e2e00000-0004-4000-8000-000000000001',
   tableQrToken: 'c295c2df-cc43-49bd-8bd5-5f7484fa9061',
+  tableOrderPin: '1234',
   kitchenDeviceToken: 'e2e00000-0001-4000-8000-000000000001',
   waiterDeviceToken: 'e2e00000-0002-4000-8000-000000000001',
   pickupDeviceToken: 'e2e00000-0003-4000-8000-000000000001',
@@ -116,6 +117,7 @@ async function main() {
   const existingTable = await prisma.table.findFirst({
     where: { branchId: branch.id, number: '1' },
   });
+  const tableOrderPinHash = await bcrypt.hash(E2E_FIXTURES.tableOrderPin, 10);
   if (!existingTable) {
     await prisma.table.create({
       data: {
@@ -125,6 +127,8 @@ async function main() {
         qrToken: E2E_FIXTURES.tableQrToken,
         qrCode: E2E_FIXTURES.tableQrToken,
         qrTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000),
+        orderPinHash: tableOrderPinHash,
+        orderPinVersion: 1,
       },
     });
   } else {
@@ -134,12 +138,16 @@ async function main() {
         qrToken: E2E_FIXTURES.tableQrToken,
         qrCode: E2E_FIXTURES.tableQrToken,
         qrTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000),
+        orderPinHash: tableOrderPinHash,
+        orderPinVersion: existingTable.orderPinVersion > 0
+          ? existingTable.orderPinVersion
+          : 1,
         deletedAt: null,
         seats: existingTable.seats || 4,
       },
     });
   }
-  console.log('✅ Demo table QR token');
+  console.log('✅ Demo table QR token + order PIN (1234)');
 
   let category = await prisma.menuCategory.findFirst({
     where: { restaurantId: restaurant.id },

@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   Course,
   OrderMode,
@@ -21,6 +22,7 @@ import { assertQrTokenValid, assertWalkInTokenValid } from '../tables/qr-token.u
 import { nextQueueNumber } from '../orders/queue-number.util';
 import { firstCoursePresent } from '../orders/course.util';
 import { balanceDue } from '../payments/payment-balance';
+import { TablePresenceService } from './table-presence.service';
 
 function resolveBrandBackgrounds(restaurant: {
   brandBackgroundUrl?: string | null;
@@ -98,6 +100,7 @@ export class CustomerService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimePublisher,
     private readonly devicesService: DevicesService,
+    private readonly tablePresence: TablePresenceService,
   ) {}
 
   /** Scan QR → browse menu with categories + modifiers. */
@@ -264,9 +267,37 @@ export class CustomerService {
     };
   }
 
+  /** Whether this device has verified the table PIN today. */
+  getTablePresence(token: string, cookieHeader: string | undefined) {
+    return this.resolveTable(token).then((table) =>
+      this.tablePresence.presenceStatus(table, cookieHeader),
+    );
+  }
+
+  verifyTablePin(
+    token: string,
+    pin: string,
+    res: Response,
+  ) {
+    return this.resolveTable(token).then((table) =>
+      this.tablePresence.verifyPin(table, pin, res),
+    );
+  }
+
   /** Cart lives on the client — this places the full cart as one order. */
-  async placeOrder(token: string, dto: PlaceCustomerOrderDto) {
+  async placeOrder(
+    token: string,
+    dto: PlaceCustomerOrderDto,
+    cookieHeader: string | undefined,
+    res: Response,
+  ) {
     const table = await this.resolveTable(token);
+    await this.tablePresence.assertCanOrder(
+      table,
+      cookieHeader,
+      dto.tablePin,
+      res,
+    );
     return this.createCustomerOrder({
       restaurantId: table.branch.restaurantId,
       branchId: table.branchId,
@@ -486,8 +517,14 @@ export class CustomerService {
     };
   }
 
-  async createServiceRequest(token: string, dto: CreateServiceRequestDto) {
+  async createServiceRequest(
+    token: string,
+    dto: CreateServiceRequestDto,
+    cookieHeader: string | undefined,
+    res: Response,
+  ) {
     const table = await this.resolveTable(token);
+    await this.tablePresence.assertCanOrder(table, cookieHeader, undefined, res);
 
     if (dto.orderId) {
       const order = await this.prisma.order.findFirst({

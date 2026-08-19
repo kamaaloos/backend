@@ -15,11 +15,17 @@ import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { qrTokenExpiryFromNow } from './qr-token.util';
+import {
+  generateOrderPin,
+  hashOrderPin,
+} from './order-pin.util';
 
 export type TableListFilters = {
   branchId?: string;
   status?: TableStatus;
 };
+
+export type TableWithOrderPin = Table & { orderPin?: string };
 
 @Injectable()
 export class TablesService {
@@ -29,7 +35,10 @@ export class TablesService {
     private readonly config: ConfigService,
   ) {}
 
-  async create(dto: CreateTableDto, currentUser: JwtPayload): Promise<Table> {
+  async create(
+    dto: CreateTableDto,
+    currentUser: JwtPayload,
+  ): Promise<TableWithOrderPin> {
     const branchId = await this.authorization.resolveBranch(
       currentUser,
       dto.branchId,
@@ -38,18 +47,24 @@ export class TablesService {
     await this.ensureNumberAvailable(branchId, dto.number);
 
     const token = randomUUID();
+    const orderPin = generateOrderPin();
+    const orderPinHash = await hashOrderPin(orderPin);
 
-    return this.prisma.table.create({
+    const table = await this.prisma.table.create({
       data: {
         branchId,
         qrToken: token,
         qrCode: token,
         qrTokenExpiresAt: this.nextQrExpiry(),
+        orderPinHash,
+        orderPinVersion: 1,
         number: dto.number,
         seats: dto.seats,
         notes: dto.notes,
       },
     });
+
+    return { ...table, orderPin };
   }
 
   async findAll(
@@ -268,19 +283,28 @@ export class TablesService {
     });
   }
 
-  /** Rotate QR token and reset expiry. Old customer links stop working. */
-  async rotateQrToken(id: string, currentUser: JwtPayload): Promise<Table> {
+  /** Rotate QR token, order PIN, and reset expiry. Old customer links stop working. */
+  async rotateQrToken(
+    id: string,
+    currentUser: JwtPayload,
+  ): Promise<TableWithOrderPin> {
     const table = await this.findOne(id, currentUser);
     const token = randomUUID();
+    const orderPin = generateOrderPin();
+    const orderPinHash = await hashOrderPin(orderPin);
 
-    return this.prisma.table.update({
+    const updated = await this.prisma.table.update({
       where: { id: table.id },
       data: {
         qrToken: token,
         qrCode: token,
         qrTokenExpiresAt: this.nextQrExpiry(),
+        orderPinHash,
+        orderPinVersion: table.orderPinVersion + 1,
       },
     });
+
+    return { ...updated, orderPin };
   }
 
   private nextQrExpiry(): Date {
