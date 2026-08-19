@@ -1,5 +1,5 @@
 /**
- * Rolling-window SLO helpers from DB samples (admin dashboard / GET /api/slo).
+ * Rolling-window SLO helpers from DB samples (admin dashboard).
  */
 
 export type SloSample = { durationSeconds: number };

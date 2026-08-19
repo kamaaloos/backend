@@ -3,6 +3,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { MetricsAuthGuard } from './auth/guards/metrics-auth.guard';
 import { CurrentUser } from './auth/decorators/current-user.decorator';
 import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './redis/redis.service';
@@ -40,6 +41,7 @@ export class AppController {
 
   /** Prometheus scrape target (process histograms + defaults). */
   @SkipThrottle()
+  @UseGuards(MetricsAuthGuard)
   @Get('metrics')
   async metrics(@Res() res: Response) {
     const body = await metricsText();
@@ -47,8 +49,9 @@ export class AppController {
     res.send(body);
   }
 
-  /** Thresholds for uptime monitors / operators (no auth). */
+  /** Thresholds for uptime monitors / operators. */
   @SkipThrottle()
+  @UseGuards(MetricsAuthGuard)
   @Get('slo')
   @Header('Cache-Control', 'no-store')
   slo() {
