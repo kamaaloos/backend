@@ -98,7 +98,8 @@ export class AuthorizationService {
       case UserRole.BRANCH_MANAGER:
       case UserRole.WAITER:
       case UserRole.CHEF:
-      case UserRole.CASHIER: {
+      case UserRole.CASHIER:
+      case UserRole.ACCOUNTANT: {
         if (!currentUser.branchId) {
           throw new ForbiddenException(
             'User is not assigned to a branch.',
@@ -169,6 +170,7 @@ export class AuthorizationService {
       case UserRole.WAITER:
       case UserRole.CHEF:
       case UserRole.CASHIER:
+      case UserRole.ACCOUNTANT:
         if (currentUser.branchId === branchId) {
           return;
         }
@@ -195,7 +197,8 @@ export class AuthorizationService {
       case UserRole.BRANCH_MANAGER:
       case UserRole.WAITER:
       case UserRole.CHEF:
-      case UserRole.CASHIER: {
+      case UserRole.CASHIER:
+      case UserRole.ACCOUNTANT: {
         if (!currentUser.restaurantId) {
           throw new ForbiddenException(
             'User is not assigned to a restaurant.',
@@ -230,6 +233,7 @@ export class AuthorizationService {
       case UserRole.WAITER:
       case UserRole.CHEF:
       case UserRole.CASHIER:
+      case UserRole.ACCOUNTANT:
         if (currentUser.restaurantId === restaurantId) {
           return;
         }

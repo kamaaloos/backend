@@ -16,6 +16,7 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthorizationService } from '../common/authorization/authorization.service';
+import { LedgerService } from '../ledger/ledger.service';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { CreatePaymentDto, CreatePendingCashDto } from './dto/create-payment.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
@@ -88,6 +89,7 @@ export class PaymentsService {
     private readonly authorization: AuthorizationService,
     private readonly realtime: RealtimePublisher,
     private readonly paymentProvider: PaymentProviderService,
+    private readonly ledger: LedgerService,
   ) { }
 
   getProviderConfig() {
@@ -361,6 +363,13 @@ export class PaymentsService {
     span.setAttribute('payment.channel', channel);
     if (status === PaymentStatus.PAID) {
       observePaymentSettle(payment.createdAt, payment.paidAt, span);
+      this.ledger.recordPayment({
+        paymentId: payment.id,
+        restaurantId: order.restaurantId,
+        branchId: order.branchId,
+        amount,
+        tipAmount,
+      }).catch(() => {});
     }
 
     const response: PaymentResponse = {
@@ -575,6 +584,14 @@ export class PaymentsService {
     };
 
     observePaymentSettle(result.createdAt, result.paidAt);
+
+    this.ledger.recordPayment({
+      paymentId: result.id,
+      restaurantId: order.restaurantId,
+      branchId: order.branchId,
+      amount: Number(result.amount),
+      tipAmount: 0,
+    }).catch(() => {});
 
     this.realtime.publishPaymentUpdated({
       ...response,
@@ -923,6 +940,14 @@ export class PaymentsService {
       result.payment.paidAt,
     );
 
+    this.ledger.recordPayment({
+      paymentId: payment.id,
+      restaurantId: payment.order.restaurantId,
+      branchId: payment.order.branchId,
+      amount: Number(payment.amount),
+      tipAmount: Number(payment.tipAmount),
+    }).catch(() => {});
+
     this.realtime.publishPaymentUpdated({
       ...response,
       restaurantId: payment.order.restaurantId,
@@ -1054,6 +1079,13 @@ export class PaymentsService {
       ...updated,
       currency: payment.order.restaurant.currency,
     };
+
+    this.ledger.recordRefund({
+      paymentId: payment.id,
+      restaurantId: payment.order.restaurantId,
+      branchId: payment.order.branchId,
+      amount: refundAmount,
+    }).catch(() => {});
 
     this.realtime.publishPaymentUpdated({
       ...response,

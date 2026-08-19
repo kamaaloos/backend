@@ -48,12 +48,13 @@ model Restaurant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branches   Branch[]
-  users      User[]
-  categories MenuCategory[]
-  menuItems  MenuItem[]
-  orders     Order[]
+  branches       Branch[]
+  users          User[]
+  categories     MenuCategory[]
+  menuItems      MenuItem[]
+  orders         Order[]
   serviceRequests ServiceRequest[]
+  journalEntries JournalEntry[]
 }
 
 model Branch {
@@ -83,11 +84,12 @@ model Branch {
   managerId String?
   manager   User?   @relation("BranchManager", fields: [managerId], references: [id])
 
-  devices Device[]
-  tables  Table[]
-  users   User[]
-  orders  Order[]
+  devices        Device[]
+  tables         Table[]
+  users          User[]
+  orders         Order[]
   serviceRequests ServiceRequest[]
+  journalEntries JournalEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -289,7 +291,8 @@ model Payment {
   receivedByUserId String?
   receivedBy       User?   @relation("PaymentsReceived", fields: [receivedByUserId], references: [id], onDelete: SetNull)
 
-  lines PaymentLine[]
+  lines          PaymentLine[]
+  journalEntries JournalEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -323,6 +326,34 @@ model PaymentLine {
 
   @@unique([paymentId, orderItemId])
   @@index([orderItemId])
+}
+
+model JournalEntry {
+  id           String         @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branchId     String?
+  branch       Branch?        @relation(fields: [branchId], references: [id])
+  date         DateTime       @default(now())
+  category     LedgerCategory
+  description  String
+  debit        Decimal        @db.Decimal(10, 2)
+  credit       Decimal        @db.Decimal(10, 2)
+  paymentId    String?
+  payment      Payment?       @relation(fields: [paymentId], references: [id])
+  createdAt    DateTime       @default(now())
+
+  @@index([restaurantId, date])
+  @@index([branchId, date])
+  @@index([paymentId])
+}
+
+enum LedgerCategory {
+  REVENUE
+  TIPS
+  REFUND
+  TAX
+  ADJUSTMENT
 }
 
 model MenuCategory {
@@ -489,6 +520,7 @@ enum UserRole {
   WAITER
   CHEF
   CASHIER
+  ACCOUNTANT
 }
 
 enum OrderStatus {

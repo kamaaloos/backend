@@ -7,6 +7,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, UserRole[]> = {
     UserRole.WAITER,
     UserRole.CHEF,
     UserRole.CASHIER,
+    UserRole.ACCOUNTANT,
   ],
 
   [UserRole.RESTAURANT_OWNER]: [
@@ -14,6 +15,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, UserRole[]> = {
     UserRole.WAITER,
     UserRole.CHEF,
     UserRole.CASHIER,
+    UserRole.ACCOUNTANT,
   ],
 
   [UserRole.BRANCH_MANAGER]: [UserRole.WAITER, UserRole.CHEF, UserRole.CASHIER],
@@ -21,4 +23,5 @@ export const ROLE_PERMISSIONS: Record<UserRole, UserRole[]> = {
   [UserRole.WAITER]: [],
   [UserRole.CHEF]: [],
   [UserRole.CASHIER]: [],
+  [UserRole.ACCOUNTANT]: [],
 };
