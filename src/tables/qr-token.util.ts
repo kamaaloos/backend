@@ -6,12 +6,27 @@ export type QrTokenTable = {
   qrTokenExpiresAt: Date | null;
 };
 
-export function assertQrTokenValid(table: QrTokenTable) {
-  if (table.qrTokenExpiresAt && table.qrTokenExpiresAt.getTime() <= Date.now()) {
-    throw new UnauthorizedException(
-      'This table QR code has expired. Ask staff for a new one.',
-    );
+export function assertGuestTokenValid(
+  expiresAt: Date | null | undefined,
+  message: string,
+) {
+  if (!expiresAt || expiresAt.getTime() <= Date.now()) {
+    throw new UnauthorizedException(message);
   }
+}
+
+export function assertQrTokenValid(table: QrTokenTable) {
+  assertGuestTokenValid(
+    table.qrTokenExpiresAt,
+    'This table QR code has expired. Ask staff for a new one.',
+  );
+}
+
+export function assertWalkInTokenValid(expiresAt: Date | null | undefined) {
+  assertGuestTokenValid(
+    expiresAt,
+    'This walk-in QR code has expired. Ask staff for a new one.',
+  );
 }
 
 export function qrTokenExpiryFromNow(ttlDays: number): Date {

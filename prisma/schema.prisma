@@ -74,6 +74,9 @@ model Branch {
   /** Opaque public token for walk-in ordering / pickup URLs (not the branch UUID). */
   walkInToken String @unique @default(uuid())
 
+  /** When set, public /w/{token} access is rejected after this timestamp. */
+  walkInTokenExpiresAt DateTime?
+
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 

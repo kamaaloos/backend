@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,12 +8,14 @@ import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { UserRole } from '@prisma/client';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { AuthorizationService } from '../common/authorization/authorization.service';
+import { qrTokenExpiryFromNow } from '../tables/qr-token.util';
 
 @Injectable()
 export class BranchesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly authorization: AuthorizationService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(dto: CreateBranchDto) {
@@ -30,6 +33,7 @@ export class BranchesService {
       data: {
         ...dto,
         walkInToken: randomUUID(),
+        walkInTokenExpiresAt: this.nextWalkInExpiry(),
       },
     });
   }
@@ -40,7 +44,10 @@ export class BranchesService {
 
     return this.prisma.branch.update({
       where: { id },
-      data: { walkInToken: randomUUID() },
+      data: {
+        walkInToken: randomUUID(),
+        walkInTokenExpiresAt: this.nextWalkInExpiry(),
+      },
     });
   }
 
@@ -108,5 +115,10 @@ export class BranchesService {
     return this.prisma.branch.delete({
       where: { id },
     });
+  }
+
+  private nextWalkInExpiry(): Date {
+    const ttlDays = Number(this.config.get('QR_TOKEN_TTL_DAYS') ?? 90);
+    return qrTokenExpiryFromNow(ttlDays);
   }
 }

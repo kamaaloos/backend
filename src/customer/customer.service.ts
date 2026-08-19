@@ -17,7 +17,7 @@ import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { DevicesService } from '../devices/devices.service';
 import { PlaceCustomerOrderDto } from './dto/place-customer-order.dto';
 import { CreateServiceRequestDto } from './dto/create-service-request.dto';
-import { assertQrTokenValid } from '../tables/qr-token.util';
+import { assertQrTokenValid, assertWalkInTokenValid } from '../tables/qr-token.util';
 import { nextQueueNumber } from '../orders/queue-number.util';
 import { firstCoursePresent } from '../orders/course.util';
 import { balanceDue } from '../payments/payment-balance';
@@ -197,7 +197,8 @@ export class CustomerService {
           select: {
             id: true,
             name: true,
-            walkInToken: true,
+            address: true,
+            phone: true,
           },
           orderBy: { name: 'asc' },
         },
@@ -224,7 +225,8 @@ export class CustomerService {
       branches: restaurant.branches.map((b) => ({
         id: b.id,
         name: b.name,
-        walkInToken: b.walkInToken,
+        address: b.address,
+        phone: b.phone,
       })),
     };
   }
@@ -976,6 +978,8 @@ export class CustomerService {
     if (!branch || !branch.restaurant.active) {
       throw new NotFoundException('Walk-in link not found');
     }
+
+    assertWalkInTokenValid(branch.walkInTokenExpiresAt);
 
     return branch;
   }

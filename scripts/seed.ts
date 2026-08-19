@@ -60,13 +60,26 @@ async function main() {
         name: 'Downtown',
         restaurantId: restaurant.id,
         walkInToken: E2E_FIXTURES.walkInToken,
+        walkInTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000),
         active: true,
       },
     });
   } else if (branch.walkInToken !== E2E_FIXTURES.walkInToken) {
     branch = await prisma.branch.update({
       where: { id: branch.id },
-      data: { walkInToken: E2E_FIXTURES.walkInToken, active: true },
+      data: {
+        walkInToken: E2E_FIXTURES.walkInToken,
+        walkInTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000),
+        active: true,
+      },
+    });
+  } else if (
+    !branch.walkInTokenExpiresAt ||
+    branch.walkInTokenExpiresAt.getTime() <= Date.now()
+  ) {
+    branch = await prisma.branch.update({
+      where: { id: branch.id },
+      data: { walkInTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000) },
     });
   }
   console.log('✅ Demo restaurant + branch (walkInToken fixed for e2e)');
@@ -110,6 +123,8 @@ async function main() {
         number: '1',
         seats: 4,
         qrToken: E2E_FIXTURES.tableQrToken,
+        qrCode: E2E_FIXTURES.tableQrToken,
+        qrTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000),
       },
     });
   } else {
@@ -117,6 +132,8 @@ async function main() {
       where: { id: existingTable.id },
       data: {
         qrToken: E2E_FIXTURES.tableQrToken,
+        qrCode: E2E_FIXTURES.tableQrToken,
+        qrTokenExpiresAt: new Date(Date.now() + 90 * 86_400_000),
         deletedAt: null,
         seats: existingTable.seats || 4,
       },
