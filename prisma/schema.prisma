@@ -24,6 +24,9 @@ model Restaurant {
   timezone String @default("Europe/Helsinki")
   currency String @default("EUR")
 
+  /** Receipt VAT/sales-tax percent; menu prices are treated as tax-inclusive. */
+  taxRatePercent Decimal @default(22) @db.Decimal(5, 2)
+
   logoUrl String?
 
   /** Customer UI brand pack — null = platform defaults. */

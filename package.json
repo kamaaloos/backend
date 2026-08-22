@@ -15,6 +15,7 @@
     "postinstall": "prisma generate",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
+    "test:ci": "jest --testPathPatterns=\"(cors\\.util|order-pin\\.util|table-presence\\.util|qr-token\\.util|cookie\\.util|ttl\\.util|secrets-match\\.util|metrics-auth\\.guard|queue-number\\.util|payment-balance|stripe-amount|payment-channel|payment-provider\\.spec|slo)\\.spec\" --forceExit",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",

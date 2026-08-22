@@ -1,9 +1,9 @@
 import { randomInt } from 'crypto';
 import * as bcrypt from 'bcrypt';
 
-/** 4-digit PIN for printed table cards. */
+/** 6-digit PIN for printed table cards (~1e6 space; verify is rate-limited). */
 export function generateOrderPin(): string {
-  return String(randomInt(1000, 10000));
+  return String(randomInt(100_000, 1_000_000));
 }
 
 export async function hashOrderPin(pin: string): Promise<string> {

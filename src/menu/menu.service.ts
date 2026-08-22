@@ -12,6 +12,11 @@ import { UpdateMenuCategoryDto } from './dto/update-menu-category.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import { CreateModifierGroupDto } from './dto/create-modifier-group.dto';
+import { UpdateModifierGroupDto } from './dto/update-modifier-group.dto';
+import {
+  CreateModifierOptionStandaloneDto,
+  UpdateModifierOptionDto,
+} from './dto/modifier-option.dto';
 
 @Injectable()
 export class MenuService {
@@ -260,5 +265,118 @@ export class MenuService {
     );
 
     return this.prisma.modifierGroup.delete({ where: { id } });
+  }
+
+  async updateModifierGroup(
+    id: string,
+    user: JwtPayload,
+    dto: UpdateModifierGroupDto,
+  ) {
+    const group = await this.prisma.modifierGroup.findUnique({
+      where: { id },
+      include: { menuItem: true },
+    });
+    if (!group) {
+      throw new NotFoundException('modifier group not found');
+    }
+    await this.authorization.canAccessRestaurant(
+      user,
+      group.menuItem.restaurantId,
+    );
+
+    const minSelect = dto.minSelect ?? group.minSelect;
+    const maxSelect = dto.maxSelect ?? group.maxSelect;
+    if (minSelect > maxSelect) {
+      throw new BadRequestException('minSelect cannot exceed maxSelect');
+    }
+
+    return this.prisma.modifierGroup.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.minSelect !== undefined ? { minSelect: dto.minSelect } : {}),
+        ...(dto.maxSelect !== undefined ? { maxSelect: dto.maxSelect } : {}),
+        ...(dto.required !== undefined ? { required: dto.required } : {}),
+        ...(dto.displayOrder !== undefined
+          ? { displayOrder: dto.displayOrder }
+          : {}),
+      },
+      include: { options: { orderBy: { displayOrder: 'asc' } } },
+    });
+  }
+
+  async createModifierOption(
+    user: JwtPayload,
+    dto: CreateModifierOptionStandaloneDto,
+  ) {
+    const group = await this.prisma.modifierGroup.findUnique({
+      where: { id: dto.groupId },
+      include: { menuItem: true },
+    });
+    if (!group) {
+      throw new NotFoundException('modifier group not found');
+    }
+    await this.authorization.canAccessRestaurant(
+      user,
+      group.menuItem.restaurantId,
+    );
+
+    return this.prisma.modifierOption.create({
+      data: {
+        groupId: dto.groupId,
+        name: dto.name,
+        priceDelta: dto.priceDelta ?? 0,
+        displayOrder: dto.displayOrder ?? 0,
+        active: dto.active ?? true,
+      },
+    });
+  }
+
+  async updateModifierOption(
+    id: string,
+    user: JwtPayload,
+    dto: UpdateModifierOptionDto,
+  ) {
+    const option = await this.prisma.modifierOption.findUnique({
+      where: { id },
+      include: { group: { include: { menuItem: true } } },
+    });
+    if (!option) {
+      throw new NotFoundException('modifier option not found');
+    }
+    await this.authorization.canAccessRestaurant(
+      user,
+      option.group.menuItem.restaurantId,
+    );
+
+    return this.prisma.modifierOption.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.priceDelta !== undefined
+          ? { priceDelta: dto.priceDelta }
+          : {}),
+        ...(dto.displayOrder !== undefined
+          ? { displayOrder: dto.displayOrder }
+          : {}),
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+      },
+    });
+  }
+
+  async removeModifierOption(id: string, user: JwtPayload) {
+    const option = await this.prisma.modifierOption.findUnique({
+      where: { id },
+      include: { group: { include: { menuItem: true } } },
+    });
+    if (!option) {
+      throw new NotFoundException('modifier option not found');
+    }
+    await this.authorization.canAccessRestaurant(
+      user,
+      option.group.menuItem.restaurantId,
+    );
+
+    return this.prisma.modifierOption.delete({ where: { id } });
   }
 }

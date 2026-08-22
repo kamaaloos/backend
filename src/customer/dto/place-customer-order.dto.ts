@@ -59,7 +59,7 @@ export class PlaceCustomerOrderDto {
 
   @IsOptional()
   @IsString()
-  @Length(4, 6)
+  @Length(6, 6)
   tablePin?: string;
 
   @IsArray()

@@ -3,6 +3,12 @@ import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-option
 /** Vercel preview/production app URLs (e.g. customer-git-main-acme.vercel.app). */
 const VERCEL_APP_ORIGIN = /^https:\/\/[\w.-]+\.vercel\.app$/;
 
+export type CorsOriginInput = {
+  corsOrigin?: string;
+  allowVercelPreviews?: string;
+  isProd?: boolean;
+};
+
 function parseOrigins(raw?: string): string[] {
   if (!raw?.trim()) return [];
   return raw
@@ -40,11 +46,20 @@ function originAllowed(
   return false;
 }
 
-export function buildCorsOptions(input: {
-  corsOrigin?: string;
-  allowVercelPreviews?: string;
-  isProd?: boolean;
-}): CorsOptions {
+export function isCorsOriginAllowed(
+  origin: string,
+  input: Pick<CorsOriginInput, 'corsOrigin' | 'allowVercelPreviews'>,
+): boolean {
+  const explicit = parseOrigins(input.corsOrigin);
+  const allowVercelPreviews = isTruthyFlag(input.allowVercelPreviews);
+  return originAllowed(origin, explicit, allowVercelPreviews);
+}
+
+/**
+ * Shared CORS policy for HTTP (`enableCors`) and Socket.IO (`@WebSocketGateway`).
+ * Supports exact origins and wildcards such as `https://*.maylesoft.com`.
+ */
+export function buildCorsOptions(input: CorsOriginInput): CorsOptions {
   const explicit = parseOrigins(input.corsOrigin);
   const allowVercelPreviews = isTruthyFlag(input.allowVercelPreviews);
   const hasWildcard = explicit.some((o) => o.includes('*'));
@@ -77,4 +92,15 @@ export function buildCorsOptions(input: {
       callback(new Error(`CORS blocked origin: ${origin}`), false);
     },
   };
+}
+
+/** Read CORS settings from `process.env` (used by Socket.IO gateway decorators). */
+export function buildCorsOptionsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): CorsOptions {
+  return buildCorsOptions({
+    corsOrigin: env.CORS_ORIGIN,
+    allowVercelPreviews: env.CORS_ALLOW_VERCEL_PREVIEWS,
+    isProd: env.NODE_ENV === 'production',
+  });
 }

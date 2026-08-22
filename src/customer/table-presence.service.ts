@@ -125,10 +125,20 @@ export class TablePresenceService {
   }
 
   private secret(): string {
-    return (
-      this.config.get<string>('TABLE_PRESENCE_SECRET') ??
-      this.config.get<string>('JWT_SECRET') ??
-      'dev-table-presence-secret'
-    );
+    const dedicated = this.config.get<string>('TABLE_PRESENCE_SECRET')?.trim();
+    if (dedicated) return dedicated;
+
+    const jwt = this.config.get<string>('JWT_SECRET')?.trim();
+    const isProd = this.config.get('NODE_ENV') === 'production';
+    if (isProd) {
+      if (!jwt) {
+        throw new ServiceUnavailableException(
+          'TABLE_PRESENCE_SECRET (or JWT_SECRET) must be set in production',
+        );
+      }
+      return jwt;
+    }
+
+    return jwt || 'dev-table-presence-secret';
   }
 }

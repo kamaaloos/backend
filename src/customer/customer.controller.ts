@@ -141,7 +141,7 @@ export class CustomerController {
   }
 
   /** Verify printed table PIN — sets daily httpOnly presence cookie. */
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('customer/:token/verify-pin')
   verifyTablePin(
     @Param('token') token: string,

@@ -94,6 +94,7 @@ const orderInclude = {
   restaurant: {
     select: {
       currency: true,
+      taxRatePercent: true,
     },
   },
 } satisfies Prisma.OrderInclude;
@@ -104,6 +105,8 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
 
 type OrderResponse = Omit<OrderWithRelations, 'restaurant'> & {
   currency: string;
+  /** Receipt VAT/sales-tax percent (tax-inclusive menu prices). */
+  taxRatePercent: number;
   /** Latest PENDING payment, else most recent — FE compat. */
   payment: OrderWithRelations['payments'][number] | null;
   balanceDue: number;
@@ -152,6 +155,7 @@ function withCurrency(order: OrderWithRelations): OrderResponse {
     payment,
     balanceDue: balanceDue(Number(rest.total), rest.payments),
     currency: restaurant.currency,
+    taxRatePercent: Number(restaurant.taxRatePercent),
   };
 }
 

@@ -1,4 +1,4 @@
-import { buildCorsOptions } from './cors.util';
+import { buildCorsOptions, isCorsOriginAllowed } from './cors.util';
 
 describe('buildCorsOptions', () => {
   it('allows all origins in dev when CORS_ORIGIN is unset', () => {
@@ -60,6 +60,11 @@ describe('buildCorsOptions', () => {
       expect(ok).toBe(true);
     });
 
+    originFn('https://hkamal.maylesoft.com', (err, ok) => {
+      expect(err).toBeNull();
+      expect(ok).toBe(true);
+    });
+
     originFn('https://admin.maylesoft.com', (err, ok) => {
       expect(err).toBeNull();
       expect(ok).toBe(true);
@@ -69,5 +74,30 @@ describe('buildCorsOptions', () => {
       expect(err).toBeInstanceOf(Error);
       expect(ok).toBe(false);
     });
+  });
+
+  it('rejects multi-level subdomain abuse against single * wildcard', () => {
+    expect(
+      isCorsOriginAllowed('https://evil.alhuda.maylesoft.com', {
+        corsOrigin: 'https://*.maylesoft.com',
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('isCorsOriginAllowed', () => {
+  it('matches Socket.IO-relevant browser origins for maylesoft tenants', () => {
+    const policy = {
+      corsOrigin:
+        'https://admin.maylesoft.com,https://kitchen.maylesoft.com,https://*.maylesoft.com,https://maylesoft.com',
+    };
+
+    expect(isCorsOriginAllowed('https://alhuda.maylesoft.com', policy)).toBe(
+      true,
+    );
+    expect(isCorsOriginAllowed('https://customer.maylesoft.com', policy)).toBe(
+      true,
+    );
+    expect(isCorsOriginAllowed('https://phishing.com', policy)).toBe(false);
   });
 });

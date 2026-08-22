@@ -17,6 +17,11 @@ import { UpdateMenuCategoryDto } from './dto/update-menu-category.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import { CreateModifierGroupDto } from './dto/create-modifier-group.dto';
+import { UpdateModifierGroupDto } from './dto/update-modifier-group.dto';
+import {
+  CreateModifierOptionStandaloneDto,
+  UpdateModifierOptionDto,
+} from './dto/modifier-option.dto';
 import { SetMenuItemAvailabilityDto } from './dto/set-menu-item-availability.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -218,5 +223,59 @@ export class MenuController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.menuService.removeModifierGroup(id, user);
+  }
+
+  @Patch('modifiers/groups/:id')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+  )
+  updateModifierGroup(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateModifierGroupDto,
+  ) {
+    return this.menuService.updateModifierGroup(id, user, dto);
+  }
+
+  @Post('modifiers/options')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+  )
+  createModifierOption(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateModifierOptionStandaloneDto,
+  ) {
+    return this.menuService.createModifierOption(user, dto);
+  }
+
+  @Patch('modifiers/options/:id')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+  )
+  updateModifierOption(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateModifierOptionDto,
+  ) {
+    return this.menuService.updateModifierOption(id, user, dto);
+  }
+
+  @Delete('modifiers/options/:id')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.RESTAURANT_OWNER,
+    UserRole.BRANCH_MANAGER,
+  )
+  removeModifierOption(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.menuService.removeModifierOption(id, user);
   }
 }

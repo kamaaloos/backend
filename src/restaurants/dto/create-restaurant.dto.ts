@@ -1,10 +1,14 @@
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsEmail,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
 } from 'class-validator';
 
@@ -34,6 +38,14 @@ export class CreateRestaurantDto {
 
   @IsString()
   phone: string;
+
+  /** VAT / sales tax percent for receipts (e.g. 22 for 22%). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  taxRatePercent?: number;
 
   @IsOptional()
   @IsString()

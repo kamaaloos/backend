@@ -12,7 +12,7 @@ export const E2E_FIXTURES = {
   restaurantSlug: 'demo-restaurant',
   walkInToken: 'e2e00000-0004-4000-8000-000000000001',
   tableQrToken: 'c295c2df-cc43-49bd-8bd5-5f7484fa9061',
-  tableOrderPin: '1234',
+  tableOrderPin: '123456',
   kitchenDeviceToken: 'e2e00000-0001-4000-8000-000000000001',
   waiterDeviceToken: 'e2e00000-0002-4000-8000-000000000001',
   pickupDeviceToken: 'e2e00000-0003-4000-8000-000000000001',
@@ -25,7 +25,7 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'admin@restaurant.local' },
     update: {
-      passwordHash: adminHash,
+      // Do not reset password on re-seed — rotate in Admin after first install.
       role: UserRole.PLATFORM_ADMIN,
       active: true,
     },
@@ -36,7 +36,10 @@ async function main() {
       active: true,
     },
   });
-  console.log('✅ Platform Admin created (admin@restaurant.local / admin123)');
+  console.log('✅ Platform Admin ensured (admin@restaurant.local)');
+  console.warn(
+    '⚠️  Demo seed credentials (admin123 / cashier123) are for local/CI only. Change or delete them before production.',
+  );
 
   const restaurant = await prisma.restaurant.upsert({
     where: { slug: E2E_FIXTURES.restaurantSlug },
@@ -88,7 +91,7 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'cashier@restaurant.local' },
     update: {
-      passwordHash: cashierHash,
+      // Do not reset password on re-seed.
       role: UserRole.CASHIER,
       active: true,
       restaurantId: restaurant.id,
@@ -103,7 +106,7 @@ async function main() {
       branchId: branch.id,
     },
   });
-  console.log('✅ Cashier created (cashier@restaurant.local / cashier123)');
+  console.log('✅ Cashier ensured (cashier@restaurant.local)');
 
   // Keep the E2E QR on the demo branch (not a stray restaurant from local demos).
   await prisma.table.updateMany({
@@ -147,7 +150,7 @@ async function main() {
       },
     });
   }
-  console.log('✅ Demo table QR token + order PIN (1234)');
+  console.log('✅ Demo table QR token + order PIN (123456)');
 
   let category = await prisma.menuCategory.findFirst({
     where: { restaurantId: restaurant.id },

@@ -81,6 +81,9 @@ export class RestaurantsService {
         email: dto.email,
         phone: dto.phone,
         address: dto.address,
+        ...(dto.taxRatePercent !== undefined
+          ? { taxRatePercent: dto.taxRatePercent }
+          : {}),
         logoUrl: emptyToNull(dto.logoUrl),
         brandAccent: emptyToNull(dto.brandAccent),
         brandButton: emptyToNull(dto.brandButton),
