@@ -101,17 +101,11 @@ export class RealtimeGateway
   ) {}
 
   afterInit(namespaceOrServer: Server | { server?: Server; adapter?: unknown }) {
-    const isProd = process.env.NODE_ENV === 'production';
     try {
       const adapterForcedOff =
         (process.env.REDIS_SOCKET_ADAPTER ?? 'true') === 'false';
 
       if (adapterForcedOff) {
-        if (isProd) {
-          throw new Error(
-            'REDIS_SOCKET_ADAPTER=false is not allowed in production — Socket.IO requires the Redis adapter',
-          );
-        }
         this.logger.warn(
           'Socket.IO using in-memory adapter (REDIS_SOCKET_ADAPTER=false)',
         );
@@ -119,13 +113,8 @@ export class RealtimeGateway
       }
 
       if (!this.redis.isEnabled()) {
-        if (isProd) {
-          throw new Error(
-            'Redis is required for Socket.IO in production — check REDIS_URL',
-          );
-        }
         this.logger.warn(
-          'Socket.IO using in-memory adapter (Redis not connected)',
+          'Socket.IO using in-memory adapter (Redis not connected) — fine for a single API instance',
         );
         return;
       }
@@ -141,27 +130,24 @@ export class RealtimeGateway
           : (candidate as unknown as { server?: Server })?.server;
 
       if (!io || typeof io.adapter !== 'function') {
-        const msg =
-          'Socket.IO server not ready for Redis adapter';
-        if (isProd) throw new Error(msg);
-        this.logger.warn(`${msg} — using memory`);
+        this.logger.warn(
+          'Socket.IO server not ready for Redis adapter — using memory',
+        );
         return;
       }
 
       const pub = this.redis.duplicate();
       const sub = this.redis.duplicate();
       if (!pub || !sub) {
-        const msg =
-          'Could not duplicate Redis clients for Socket.IO adapter';
-        if (isProd) throw new Error(msg);
-        this.logger.warn(`${msg} — using memory`);
+        this.logger.warn(
+          'Could not duplicate Redis clients for Socket.IO adapter — using memory',
+        );
         return;
       }
 
       io.adapter(createAdapter(pub, sub));
       this.logger.log('Socket.IO Redis adapter enabled');
     } catch (err) {
-      if (isProd) throw err;
       this.logger.warn(
         `Socket.IO Redis adapter failed (${(err as Error).message}) — using memory`,
       );

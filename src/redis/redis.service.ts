@@ -11,7 +11,6 @@ export class RedisService implements OnModuleDestroy {
   constructor(private readonly config: ConfigService) {}
 
   async connect() {
-    const isProd = this.config.get('NODE_ENV') === 'production';
     const connection =
       this.config.get<string>('REDIS_URL')?.trim() ||
       (this.config.get('REDIS_HOST')
@@ -19,13 +18,8 @@ export class RedisService implements OnModuleDestroy {
         : '');
 
     if (!connection) {
-      if (isProd) {
-        throw new Error(
-          'REDIS_URL (or REDIS_HOST) is required in production for rate limits and Socket.IO. Local/dev may omit Redis to use in-memory fallbacks.',
-        );
-      }
       this.logger.warn(
-        'REDIS_URL not set — using in-memory fallbacks (single instance only)',
+        'REDIS_URL not set — using in-memory fallbacks (single instance only). Add Redis before scaling the API.',
       );
       return;
     }
@@ -47,21 +41,8 @@ export class RedisService implements OnModuleDestroy {
       this.logger.log(`Redis connected (${connection})`);
     } catch (err) {
       const message = (err as Error).message;
-      if (isProd) {
-        try {
-          this.client?.disconnect();
-        } catch {
-          /* ignore */
-        }
-        this.client = null;
-        this.enabled = false;
-        throw new Error(
-          `Redis unavailable in production (${message}) — refusing to start`,
-        );
-      }
-
       this.logger.warn(
-        `Redis unavailable (${message}) — falling back to memory`,
+        `Redis unavailable (${message}) — falling back to memory (single instance only)`,
       );
       try {
         this.client?.disconnect();
