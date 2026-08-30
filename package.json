@@ -20,8 +20,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed": "tsx scripts/seed.ts",
-    "script:create-menu-item": "tsx scripts/create-menu-item.ts"
+    "seed": "node --import tsx scripts/seed.ts",
+    "script:create-menu-item": "node --import tsx scripts/create-menu-item.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -109,6 +109,6 @@
     "testEnvironment": "node"
   },
   "prisma": {
-    "seed": "tsx scripts/seed.ts"
+    "seed": "node --import tsx scripts/seed.ts"
   }
 }

@@ -5,7 +5,8 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "npx prisma migrate deploy && npm run start:prod"
+# Retries migrate for Neon scale-to-zero wake (P1001). See scripts/migrate-deploy-with-retry.mjs
+startCommand = "node scripts/migrate-deploy-with-retry.mjs && npm run start:prod"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
