@@ -65,4 +65,32 @@ export class LedgerController {
       to: to ? new Date(to) : undefined,
     });
   }
+
+  @Get('product-sales')
+  async productSales(
+    @CurrentUser() user: JwtPayload,
+    @Query('restaurantId') restaurantId?: string,
+    @Query('branchId') branchId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+    @Query('productName') productName?: string,
+    @Query('categoryName') categoryName?: string,
+  ) {
+    const resolvedRestaurantId = this.authorization.resolveRestaurantId(
+      user,
+      restaurantId,
+    );
+    return this.ledger.productSales({
+      restaurantId: resolvedRestaurantId,
+      branchId,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+      skip: skip ? parseInt(skip, 10) : undefined,
+      take: take ? parseInt(take, 10) : undefined,
+      productName,
+      categoryName,
+    });
+  }
 }

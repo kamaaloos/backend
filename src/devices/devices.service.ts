@@ -49,6 +49,8 @@ export type StaffDeviceView = Omit<Device, 'token'> & {
 export class DevicesService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DevicesService.name);
   private staleTimer?: ReturnType<typeof setInterval>;
+  /** Prevent overlapping sweeps when the DB is slow. */
+  private sweeping = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -57,7 +59,11 @@ export class DevicesService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.staleTimer = setInterval(() => {
-      void this.markStaleDevicesOffline();
+      void this.markStaleDevicesOffline().catch((err) => {
+        this.logger.warn(
+          `Stale device sweep failed: ${(err as Error).message}`,
+        );
+      });
     }, STALE_SWEEP_MS);
   }
 
@@ -323,23 +329,34 @@ export class DevicesService implements OnModuleInit, OnModuleDestroy {
 
   /** Flip ONLINE → OFFLINE when heartbeat / lastSeen goes quiet. */
   async markStaleDevicesOffline() {
-    const cutoff = new Date(Date.now() - DEVICE_STALE_MS);
+    if (this.sweeping) return 0;
+    this.sweeping = true;
+    try {
+      const cutoff = new Date(Date.now() - DEVICE_STALE_MS);
 
-    const result = await this.prisma.device.updateMany({
-      where: {
-        status: DeviceStatus.ONLINE,
-        OR: [{ lastSeen: { lt: cutoff } }, { lastSeen: null }],
-      },
-      data: {
-        status: DeviceStatus.OFFLINE,
-      },
-    });
+      const result = await this.prisma.device.updateMany({
+        where: {
+          status: DeviceStatus.ONLINE,
+          OR: [{ lastSeen: { lt: cutoff } }, { lastSeen: null }],
+        },
+        data: {
+          status: DeviceStatus.OFFLINE,
+        },
+      });
 
-    if (result.count > 0) {
-      this.logger.log(`Marked ${result.count} stale device(s) OFFLINE`);
+      if (result.count > 0) {
+        this.logger.log(`Marked ${result.count} stale device(s) OFFLINE`);
+      }
+
+      return result.count;
+    } catch (err) {
+      this.logger.warn(
+        `Stale device sweep failed: ${(err as Error).message}`,
+      );
+      return 0;
+    } finally {
+      this.sweeping = false;
     }
-
-    return result.count;
   }
 
   /** Staff JSON: never leak bearer token unless explicitly requested once. */

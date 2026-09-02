@@ -55,6 +55,26 @@ function taxFromInclusiveGross(gross: number, taxRatePercent: number) {
   return { netExTax, taxCollected };
 }
 
+function paymentDateFilter(
+  from?: Date,
+  to?: Date,
+): Prisma.DateTimeFilter | undefined {
+  if (!from && !to) return undefined;
+  const filter: Prisma.DateTimeFilter = {};
+  if (from) filter.gte = from;
+  if (to) {
+    const end = new Date(to);
+    end.setUTCHours(23, 59, 59, 999);
+    filter.lte = end;
+  }
+  return filter;
+}
+
+const PAID_STATUSES: PaymentStatus[] = [
+  PaymentStatus.PAID,
+  PaymentStatus.PARTIALLY_REFUNDED,
+];
+
 @Injectable()
 export class LedgerService {
   constructor(private readonly prisma: PrismaService) {}
@@ -255,5 +275,226 @@ export class LedgerService {
     }
 
     return [...map.values()].sort((a, b) => a.channel.localeCompare(b.channel));
+  }
+
+  /** Per-product sales from paid orders (tax-inclusive menu prices). */
+  async productSales(
+    opts: PeriodFilter & {
+      skip?: number;
+      take?: number;
+      productName?: string;
+      categoryName?: string;
+    },
+  ) {
+    const restaurant = await this.prisma.restaurant.findUnique({
+      where: { id: opts.restaurantId },
+      select: { taxRatePercent: true, currency: true },
+    });
+    const taxRatePercent = Number(restaurant?.taxRatePercent ?? 22);
+    const currency = restaurant?.currency ?? 'EUR';
+    const dateFilter = paymentDateFilter(opts.from, opts.to);
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        restaurantId: opts.restaurantId,
+        ...(opts.branchId ? { branchId: opts.branchId } : {}),
+        payments: {
+          some: {
+            status: { in: PAID_STATUSES },
+            ...(dateFilter
+              ? {
+                  OR: [
+                    { paidAt: dateFilter },
+                    { paidAt: null, createdAt: dateFilter },
+                  ],
+                }
+              : {}),
+          },
+        },
+      },
+      select: {
+        id: true,
+        payments: {
+          where: { status: { in: PAID_STATUSES } },
+          select: {
+            id: true,
+            paidAt: true,
+            createdAt: true,
+            receivedBy: {
+              select: {
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+          },
+          orderBy: { paidAt: 'asc' },
+        },
+        items: {
+          select: {
+            quantity: true,
+            price: true,
+            menuItem: {
+              select: {
+                name: true,
+                category: { select: { name: true } },
+              },
+            },
+            modifiers: { select: { priceDelta: true } },
+          },
+        },
+      },
+    });
+
+    type Line = {
+      productName: string;
+      categoryName: string;
+      quantity: number;
+      taxRatePercent: number;
+      netExTax: number;
+      taxAmount: number;
+      grossTotal: number;
+      soldAt: string;
+      orderId: string;
+      paymentId: string;
+      cashierName: string | null;
+    };
+
+    const lines: Line[] = [];
+
+    for (const order of orders) {
+      const paidPayments = order.payments
+        .map((p) => ({
+          ...p,
+          at: p.paidAt ?? p.createdAt,
+        }))
+        .filter((p): p is typeof p & { at: Date } => p.at != null)
+        .sort((a, b) => a.at.getTime() - b.at.getTime());
+      const payment = paidPayments[0];
+      if (!payment) continue;
+
+      const cashierName = payment.receivedBy
+        ? [payment.receivedBy.firstName, payment.receivedBy.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim() ||
+          payment.receivedBy.email
+        : null;
+
+      for (const item of order.items) {
+        const modifierTotal = item.modifiers.reduce(
+          (sum, m) => sum + Number(m.priceDelta),
+          0,
+        );
+        const unitGross = Number(item.price) + modifierTotal;
+        const gross = Number((unitGross * item.quantity).toFixed(2));
+        const { netExTax, taxCollected } = taxFromInclusiveGross(
+          gross,
+          taxRatePercent,
+        );
+        lines.push({
+          productName: item.menuItem.name,
+          categoryName: item.menuItem.category.name,
+          quantity: item.quantity,
+          taxRatePercent,
+          netExTax,
+          taxAmount: taxCollected,
+          grossTotal: gross,
+          soldAt: payment.at.toISOString(),
+          orderId: order.id,
+          paymentId: payment.id,
+          cashierName,
+        });
+      }
+    }
+
+    lines.sort(
+      (a, b) => new Date(b.soldAt).getTime() - new Date(a.soldAt).getTime(),
+    );
+
+    const byProductMap = new Map<
+      string,
+      {
+        productName: string;
+        categoryName: string;
+        quantitySold: number;
+        grossTotal: number;
+        netExTax: number;
+        taxAmount: number;
+      }
+    >();
+
+    for (const line of lines) {
+      const key = `${line.categoryName}\0${line.productName}`;
+      const row = byProductMap.get(key) ?? {
+        productName: line.productName,
+        categoryName: line.categoryName,
+        quantitySold: 0,
+        grossTotal: 0,
+        netExTax: 0,
+        taxAmount: 0,
+      };
+      row.quantitySold += line.quantity;
+      row.grossTotal = Number((row.grossTotal + line.grossTotal).toFixed(2));
+      row.netExTax = Number((row.netExTax + line.netExTax).toFixed(2));
+      row.taxAmount = Number((row.taxAmount + line.taxAmount).toFixed(2));
+      byProductMap.set(key, row);
+    }
+
+    const byProduct = [...byProductMap.values()].sort(
+      (a, b) => b.grossTotal - a.grossTotal,
+    );
+
+    const productFilter = opts.productName?.trim();
+    const categoryFilter = opts.categoryName?.trim();
+    const detailLines =
+      productFilter || categoryFilter
+        ? lines.filter((line) => {
+            if (productFilter && line.productName !== productFilter) {
+              return false;
+            }
+            if (categoryFilter && line.categoryName !== categoryFilter) {
+              return false;
+            }
+            return true;
+          })
+        : lines;
+
+    const summary = detailLines.reduce(
+      (acc, line) => {
+        acc.quantitySold += line.quantity;
+        acc.lineCount += 1;
+        acc.grossTotal = Number((acc.grossTotal + line.grossTotal).toFixed(2));
+        acc.netExTax = Number((acc.netExTax + line.netExTax).toFixed(2));
+        acc.taxAmount = Number((acc.taxAmount + line.taxAmount).toFixed(2));
+        return acc;
+      },
+      {
+        quantitySold: 0,
+        lineCount: 0,
+        grossTotal: 0,
+        netExTax: 0,
+        taxAmount: 0,
+      },
+    );
+
+    const linesTotal = detailLines.length;
+    const skip = Math.max(0, opts.skip ?? 0);
+    const take = opts.take;
+    const pagedLines =
+      take != null ? detailLines.slice(skip, skip + take) : detailLines;
+
+    return {
+      currency,
+      taxRatePercent,
+      lines: pagedLines,
+      linesTotal,
+      summary,
+      byProduct,
+      filter: {
+        productName: productFilter || null,
+        categoryName: categoryFilter || null,
+      },
+    };
   }
 }

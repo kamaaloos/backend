@@ -96,6 +96,8 @@ async function main() {
       active: true,
       restaurantId: restaurant.id,
       branchId: branch.id,
+      firstName: 'Hasan',
+      lastName: 'Ali',
     },
     create: {
       email: 'cashier@restaurant.local',
@@ -104,9 +106,11 @@ async function main() {
       active: true,
       restaurantId: restaurant.id,
       branchId: branch.id,
+      firstName: 'Hasan',
+      lastName: 'Ali',
     },
   });
-  console.log('✅ Cashier ensured (cashier@restaurant.local)');
+  console.log('✅ Cashier ensured (cashier@restaurant.local / Hasan Ali)');
 
   // Keep the E2E QR on the demo branch (not a stray restaurant from local demos).
   await prisma.table.updateMany({
